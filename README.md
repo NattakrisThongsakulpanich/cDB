@@ -49,7 +49,7 @@ cDB/
 - any **C** compiler
 - **Ninja** or **Make** build system
 
-### 1. Build the Library
+### Build the Library
 
 ```bash
 mkdir build
@@ -59,24 +59,6 @@ cmake --build .
 ```
 
 This compiles `libcDB_Library.a` (or `cDB_Library.lib` on Windows) inside your `build` directory.
-
-### 2. Including in a CMake Project
-
-To use `cDB` in your own project, link against `cDB_Library` in your `CMakeLists.txt`:
-
-```cmake
-cmake_minimum_required(VERSION 3.10)
-project(MyDatabaseApp C)
-
-# Include the cDB library directory
-add_subdirectory(cDB)
-
-# Build executable
-add_executable(app src/main.c)
-
-# Link cDB static library
-target_link_libraries(app PRIVATE cDB_Library)
-```
 
 ---
 
