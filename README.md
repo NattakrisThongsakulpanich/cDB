@@ -46,7 +46,7 @@ cDB/
 ### Prerequisites
 
 - **CMake** (v3.10 or higher)
-- **Clang** or any C compiler
+- any **C** compiler
 - **Ninja** or **Make** build system
 
 ### 1. Build the Library
@@ -67,8 +67,6 @@ To use `cDB` in your own project, link against `cDB_Library` in your `CMakeLists
 ```cmake
 cmake_minimum_required(VERSION 3.10)
 project(MyDatabaseApp C)
-
-set(CMAKE_C_COMPILER clang)
 
 # Include the cDB library directory
 add_subdirectory(cDB)
