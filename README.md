@@ -2,6 +2,8 @@
 
 `cDB` is a lightweight, in-memory relational database management library written in C. It provides structured table creation, typed columns, array-based row insertion, conditional querying, updating, and row deletion.
 
+This project is a part of KMUTT Department of Computer Engineering student's project. 
+
 ---
 
 ## Features
