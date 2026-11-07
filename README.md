@@ -24,18 +24,17 @@
 ## Project Structure
 
 ```text
-my_project/
+cDB/
 ├── CMakeLists.txt
 ├── README.md
 ├── src/
-│   ├── cDB.c
-│   ├── cDB.h
-│   ├── cDB_Table.c
-│   ├── cDB_Table.h
-│   ├── safefOC.c
-│   └── safefOC.h
-└── tests/
-    └── main.c
+    ├── cDB.c
+    ├── cDB.h
+    ├── cDB_Table.c
+    ├── cDB_Table.h
+    ├── safefOC.c
+    └── safefOC.h
+
 ```
 
 ---
@@ -45,17 +44,15 @@ my_project/
 ### Prerequisites
 
 - **CMake** (v3.10 or higher)
-- **Clang** C compiler
+- **Clang** or any C compiler
 - **Ninja** or **Make** build system
 
-### 1. Build the Static Library
-
-Create a build directory and run CMake using Clang:
+### 1. Build the Library
 
 ```bash
 mkdir build
 cd build
-cmake .. -DCMAKE_C_COMPILER=clang
+cmake .. -DCMAKE_C_COMPILER=YOUR_C_COMPILER
 cmake --build .
 ```
 
