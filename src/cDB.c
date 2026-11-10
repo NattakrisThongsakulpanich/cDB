@@ -353,6 +353,134 @@ static bool check_condition(cDB_Table* t, cDB_DataType* types, uint32_t record_i
     }
 }
 
+static bool check_compound_condition(cDB_Table* t, cDB_DataType* types, uint32_t record_idx, const cDB_CompoundCond* comp) {
+    if (!comp || comp->count == 0) return true; // Empty compound condition matches all
+
+    // Evaluate first clause
+    bool current_result = check_condition(t, types, record_idx, &comp->clauses[0].cond);
+
+    for (uint32_t i = 0; i < comp->count - 1; i++) {
+        cDB_LogicConnective op = comp->clauses[i].next_op;
+        bool next_match = check_condition(t, types, record_idx, &comp->clauses[i + 1].cond);
+
+        if (op == CDB_LOGIC_AND) {
+            current_result = current_result && next_match;
+        } else if (op == CDB_LOGIC_OR) {
+            current_result = current_result || next_match;
+        }
+    }
+
+    return current_result;
+}
+
+cDB_CompoundCond* cDB_compound_init(void) {
+    cDB_CompoundCond* comp = (cDB_CompoundCond*)calloc(1, sizeof(cDB_CompoundCond));
+    if (!comp) return NULL;
+    comp->capacity = 4;
+    comp->clauses = (cDB_CompoundClause*)calloc(comp->capacity, sizeof(cDB_CompoundClause));
+    if (!comp->clauses) {
+        free(comp);
+        return NULL;
+    }
+    comp->count = 0;
+    return comp;
+}
+
+void cDB_compound_free(cDB_CompoundCond* comp) {
+    if (!comp) return;
+    if (comp->clauses) free(comp->clauses);
+    free(comp);
+}
+
+void cDB_compound_add(cDB_CompoundCond* comp, cDB_Condition cond, cDB_LogicConnective next_op) {
+    if (!comp) return;
+    if (comp->count >= comp->capacity) {
+        comp->capacity *= 2;
+        comp->clauses = (cDB_CompoundClause*)realloc(comp->clauses, comp->capacity * sizeof(cDB_CompoundClause));
+        if (!comp->clauses) return;
+    }
+    comp->clauses[comp->count].cond = cond;
+    comp->clauses[comp->count].next_op = next_op;
+    comp->count++;
+}
+
+cDB_ResultSet* cDB_select_compound(cDB_Database* db, const char* table_name, const cDB_CompoundCond* comp) {
+    int32_t idx = find_table_idx(db, table_name);
+    if (idx < 0) return NULL;
+
+    uint32_t tidx = (uint32_t)idx;
+    cDB_Table* t = db->tables[tidx];
+
+    cDB_ResultSet* res = (cDB_ResultSet*)calloc(1, sizeof(cDB_ResultSet));
+    if (!res) return NULL;
+
+    res->db = db;
+    res->table_idx = tidx;
+    res->capacity = 16;
+    res->record_indices = (uint32_t*)malloc(res->capacity * sizeof(uint32_t));
+    res->count = 0;
+
+    for (uint32_t r = 0; r < t->maxRecord; r++) {
+        if (t->RecordAlias[r][0] == '\0') continue;
+
+        if (check_compound_condition(t, db->attr_types[tidx], r, comp)) {
+            if (res->count >= res->capacity) {
+                res->capacity *= 2;
+                res->record_indices = (uint32_t*)realloc(res->record_indices, res->capacity * sizeof(uint32_t));
+            }
+            res->record_indices[res->count++] = r;
+        }
+    }
+
+    return res;
+}
+
+uint32_t cDB_update_compound(cDB_Database* db, const char* table_name, const char* target_attr, const void* new_val, const cDB_CompoundCond* comp) {
+    int32_t idx = find_table_idx(db, table_name);
+    if (idx < 0 || !target_attr || !new_val) return 0;
+
+    uint32_t tidx = (uint32_t)idx;
+    cDB_Table* t = db->tables[tidx];
+    uint32_t attr_idx = cDB_Table_getAttributeIdx(t, target_attr);
+    if (attr_idx == UINT32_MAX) return 0;
+
+    uint32_t updated_count = 0;
+    for (uint32_t r = 0; r < t->maxRecord; r++) {
+        if (t->RecordAlias[r][0] == '\0') continue;
+
+        if (check_compound_condition(t, db->attr_types[tidx], r, comp)) {
+            cDB_Table_setRecord(t, r, attr_idx, (void*)new_val);
+            updated_count++;
+        }
+    }
+    return updated_count;
+}
+
+uint32_t cDB_delete_compound(cDB_Database* db, const char* table_name, const cDB_CompoundCond* comp) {
+    int32_t idx = find_table_idx(db, table_name);
+    if (idx < 0) return 0;
+
+    uint32_t tidx = (uint32_t)idx;
+    cDB_Table* t = db->tables[tidx];
+
+    uint32_t deleted_count = 0;
+    for (uint32_t r = 0; r < t->maxRecord; r++) {
+        if (t->RecordAlias[r][0] == '\0') continue;
+
+        if (check_compound_condition(t, db->attr_types[tidx], r, comp)) {
+            t->RecordAlias[r][0] = '\0';
+            for (uint32_t c = 0; c < t->maxAttribute; c++) {
+                void* rec = cDB_Table_getRecord(t, r, c);
+                if (rec) {
+                    memset(rec, 0, t->AttributeSizes[c]);
+                }
+            }
+            deleted_count++;
+        }
+    }
+    return deleted_count;
+}
+
 cDB_ResultSet* cDB_select(cDB_Database* db, const char* table_name, const cDB_Condition* cond) {
     int32_t idx = find_table_idx(db, table_name);
     if (idx < 0) return NULL;

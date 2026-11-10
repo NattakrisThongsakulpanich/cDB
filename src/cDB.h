@@ -45,12 +45,31 @@ typedef enum {
     CDB_OP_GTE  // >=
 } cDB_Op;
 
+typedef enum {
+    CDB_LOGIC_NONE = 0, // Terminal / no following condition
+    CDB_LOGIC_AND,
+    CDB_LOGIC_OR
+} cDB_LogicConnective;
+
 // Where filter condition
 typedef struct {
     const char* attr_name;
     cDB_Op op;
     const void* val; // Pointer to comparison value
 } cDB_Condition;
+
+// Single clause inside a compound condition chain
+typedef struct {
+    cDB_Condition cond;
+    cDB_LogicConnective next_op; // Logical connective to the next clause
+} cDB_CompoundClause;
+
+// Compound condition holding an array of clauses
+typedef struct {
+    cDB_CompoundClause* clauses;
+    uint32_t count;
+    uint32_t capacity;
+} cDB_CompoundCond;
 
 // Query result set structure (like SQL cursor/result)
 typedef struct {
@@ -93,3 +112,13 @@ const char* cDB_result_get_string(const cDB_ResultSet* res, uint32_t result_reco
 
 // Pretty print a result set to stdout (table format)
 void cDB_print_result(const cDB_ResultSet* res);
+
+// Compound condition helpers
+cDB_CompoundCond* cDB_compound_init(void);
+void cDB_compound_free(cDB_CompoundCond* comp);
+void cDB_compound_add(cDB_CompoundCond* comp, cDB_Condition cond, cDB_LogicConnective next_op);
+
+// Compound DML / DQL variants
+cDB_ResultSet* cDB_select_compound(cDB_Database* db, const char* table_name, const cDB_CompoundCond* comp);
+uint32_t cDB_update_compound(cDB_Database* db, const char* table_name, const char* target_attr, const void* new_val, const cDB_CompoundCond* comp);
+uint32_t cDB_delete_compound(cDB_Database* db, const char* table_name, const cDB_CompoundCond* comp);
