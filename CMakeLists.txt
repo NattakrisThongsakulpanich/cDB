@@ -16,3 +16,13 @@ add_library(cDB STATIC
 target_include_directories(cDB PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
+
+# Example executables
+add_executable(example_save_open examples/example_save_open.c)
+target_link_libraries(example_save_open PRIVATE cDB)
+
+add_executable(example_select examples/example_select.c)
+target_link_libraries(example_select PRIVATE cDB)
+
+add_executable(example_print examples/example_print.c)
+target_link_libraries(example_print PRIVATE cDB)
