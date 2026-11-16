@@ -1,124 +1,119 @@
 #pragma once
 
-#include "cDB_Table.h"
-#include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
+#include <stdio.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
 
-// Supported attribute data types
-typedef enum {
-    CDB_TYPE_INT32,
-    CDB_TYPE_INT64,
-    CDB_TYPE_FLOAT,
-    CDB_TYPE_DOUBLE,
-    CDB_TYPE_STRING, // Fixed-size string buffer up to size bytes
-    CDB_TYPE_BYTES   // Raw binary / struct
-} cDB_DataType;
+#include "./cDB_Table.h"
 
-// Attribute schema definition for creating tables
-typedef struct {
-    const char* name;
-    cDB_DataType type;
-    size_t size; // For strings / bytes; if 0 for primitives, auto-determined
-} cDB_AttributeDef;
+extern const char MAGIC_BYTE[12];
+#define STD_CDB_STRLEN 65 /* 64+1 reserve for '\0' */
+#define CDB_OUT_OF_RANGE uint64_t
+#define cDB_Record uint64_t
 
-// High-level Database structure holding tables
-typedef struct {
-    char name[64]; // name of a Database
-    uint32_t max_tables; // Max number of tables
-    uint32_t table_count;
-    char (*table_names)[64]; 
-    
-    // This is not Matrix of cDB_Table it's a pointer to a heap
-    // cDB_Table_init returns a heap to a Table
-    cDB_Table** tables; // Tables
-    
-    cDB_DataType** attr_types; // [table_idx][attr_idx]
+typedef enum
+{
+	CDB_INT32,
+	CDB_INT64,
+	CDB_UINT32,
+	CDB_UINT64,
+	CDB_FLOAT32,
+	CDB_FLOAT64,
+	CDB_STRING,
+	CDB_CUSTOM,
+} cDB_Datatype;
+
+typedef enum
+{
+	CDB_SORTDIR_ASCEND,
+	CDB_SORTDIR_DESCEND,
+} cDB_SortDirection;
+
+typedef struct
+{
+	char UpperLeft_Corner;
+	char UpperRight_Corner;
+	char LowerLeft_Corner;
+	char LowerRight_Corner;
+	char VerticalLine;
+	char HorizontalLine;
+} cDB_PrintStyle;
+
+typedef struct
+{
+	char name[STD_CDB_STRLEN];
+	uint64_t idx;
+	size_t size;
+	cDB_Datatype type;
+	bool isValid;
+} cDB_Attribute;
+
+typedef struct
+{
+	cDB_Record* projRecords; // an Array of Record associated with a query
+	uint64_t* projAttributes; // pointer to the projected attributes associated with a query
+	uint64_t nRecords; // number of records in this projection
+	uint64_t nAttributes; // number of Attributes in this projection
+} cDB_Projection;
+
+typedef struct
+{
+	cDB_Record* inCondRecords; // Records with condition met
+	uint64_t nResult; // number of Results
+} cDB_Result;
+
+typedef struct
+{
+	cDB_Table* table; 
+	cDB_Result qResult; // result from select
+	bool isSaved;
 } cDB_Database;
 
-// Comparison operators for WHERE filter conditions
-typedef enum {
-    CDB_OP_EQ,  // ==
-    CDB_OP_NEQ, // !=
-    CDB_OP_LT,  // <
-    CDB_OP_LTE, // <=
-    CDB_OP_GT,  // >
-    CDB_OP_GTE  // >=
-} cDB_Op;
+typedef bool (*cDB_Predicate)(cDB_Database* db, cDB_Record record, void* user_data);
 
-typedef enum {
-    CDB_LOGIC_NONE = 0, // Terminal / no following condition
-    CDB_LOGIC_AND,
-    CDB_LOGIC_OR
-} cDB_LogicConnective;
+// Database lifecycle
+cDB_Database* cDB_Init(void);
+void cDB_Close(cDB_Database* db);
 
-// Where filter condition
-typedef struct {
-    const char* attr_name;
-    cDB_Op op;
-    const void* val; // Pointer to comparison value
-} cDB_Condition;
+// Persistence
+bool cDB_Save(cDB_Database* db, const char filename[65]);
+bool cDB_Open(cDB_Database* db, const char filename[65]);
 
-// Single clause inside a compound condition chain
-typedef struct {
-    cDB_Condition cond;
-    cDB_LogicConnective next_op; // Logical connective to the next clause
-} cDB_CompoundClause;
+// Table manipulation
+bool cDB_newTable(cDB_Database* db, const char name[STD_CDB_STRLEN], const uint32_t maxRecord, const uint32_t maxAttribute);
 
-// Compound condition holding an array of clauses
-typedef struct {
-    cDB_CompoundClause* clauses;
-    uint32_t count;
-    uint32_t capacity;
-} cDB_CompoundCond;
+// Attribute operations
+cDB_Attribute cDB_createAttribute(cDB_Database* db, const char alias[STD_CDB_STRLEN], cDB_Datatype type, size_t custom_size);
+cDB_Attribute cDB_getAttribute(cDB_Database* db, const char alias[STD_CDB_STRLEN]);
+void cDB_setAttributeAlias(cDB_Database *db, cDB_Attribute attrib, const char alias[STD_CDB_STRLEN]);
 
-// Query result set structure (like SQL cursor/result)
-typedef struct {
-    cDB_Database* db;
-    uint32_t table_idx;
-    uint32_t* record_indices;
-    uint32_t count;
-    uint32_t capacity;
-} cDB_ResultSet;
+// Record operations
+cDB_Record cDB_getRecord(cDB_Database* db, const char alias[STD_CDB_STRLEN]);
+void cDB_setRecordAlias(cDB_Database *db, cDB_Record record, const char alias[STD_CDB_STRLEN]);
+void cDB_setRecordValue(cDB_Database* db, cDB_Record record, cDB_Attribute attrib, void* data);
+void* cDB_getRecordValue(cDB_Database* db, cDB_Record record, cDB_Attribute attrib);
 
-// --- Database Lifecycle ---
-cDB_Database* cDB_open(const char* name, uint32_t max_tables);
-void cDB_close(cDB_Database* db);
+// Selection & Results
+void cDB_clearResult(cDB_Database* db);
+bool cDB_select(cDB_Database* db, cDB_Predicate predicate, void* user_data);
+cDB_Record cDB_resultGetRecord(const cDB_Database* db, uint64_t result_idx);
+uint64_t cDB_resultLen(const cDB_Database* db);
+void* cDB_resultGetValue(cDB_Database* db, uint64_t result_idx, cDB_Attribute attrib);
 
-// --- DDL (CREATE TABLE, DROP TABLE) ---
-bool cDB_create_table(cDB_Database* db, const char* table_name, const cDB_AttributeDef* attrs, uint32_t num_attrs, uint32_t max_records);
-bool cDB_drop_table(cDB_Database* db, const char* table_name);
-
-// --- DML (INSERT, UPDATE, DELETE) ---
-// Insert a record by providing an array of pointers to attribute values in schema order
-int64_t cDB_insert(cDB_Database* db, const char* table_name, const char* record_alias, const void** values);
-
-// Update attributes for records matching condition(s)
-uint32_t cDB_update(cDB_Database* db, const char* table_name, const char* target_attr, const void* new_val, const cDB_Condition* cond);
-
-// Delete records matching condition(s) (marks alias or zeroes data)
-uint32_t cDB_delete(cDB_Database* db, const char* table_name, const cDB_Condition* cond);
-
-// --- DQL (SELECT) ---
-// Select records matching an optional condition (cond can be NULL to select all)
-cDB_ResultSet* cDB_select(cDB_Database* db, const char* table_name, const cDB_Condition* cond);
-void cDB_free_result(cDB_ResultSet* res);
-
-// Value getters from ResultSet
-const void* cDB_result_get(const cDB_ResultSet* res, uint32_t result_record_idx, const char* attr_name);
-int32_t cDB_result_get_int32(const cDB_ResultSet* res, uint32_t result_record_idx, const char* attr_name, int32_t default_val);
-int64_t cDB_result_get_int64(const cDB_ResultSet* res, uint32_t result_record_idx, const char* attr_name, int64_t default_val);
-double cDB_result_get_double(const cDB_ResultSet* res, uint32_t result_record_idx, const char* attr_name, double default_val);
-const char* cDB_result_get_string(const cDB_ResultSet* res, uint32_t result_record_idx, const char* attr_name);
-
-// Pretty print a result set to stdout (table format)
-void cDB_print_result(const cDB_ResultSet* res);
-
-// Compound condition helpers
-cDB_CompoundCond* cDB_compound_init(void);
-void cDB_compound_free(cDB_CompoundCond* comp);
-void cDB_compound_add(cDB_CompoundCond* comp, cDB_Condition cond, cDB_LogicConnective next_op);
-
-// Compound DML / DQL variants
-cDB_ResultSet* cDB_select_compound(cDB_Database* db, const char* table_name, const cDB_CompoundCond* comp);
-uint32_t cDB_update_compound(cDB_Database* db, const char* table_name, const char* target_attr, const void* new_val, const cDB_CompoundCond* comp);
-uint32_t cDB_delete_compound(cDB_Database* db, const char* table_name, const cDB_CompoundCond* comp);
+// Projections & Printing
+cDB_Projection* cDB_getProjection(cDB_Database* db, cDB_Record* records, uint64_t nRecords, const uint64_t* attrib_indices, uint64_t nAttributes);
+cDB_Projection* cDB_getResultProjection(cDB_Database* db);
+cDB_Projection* cDB_getTableProjection(cDB_Database* db);
+void cDB_freeProjection(cDB_Projection* proj);
+void cDB_printProjection(
+	const cDB_Database* db, 
+	const cDB_Projection* proj, 
+	bool hSeperator, 
+	bool vSeperator, 
+	cDB_PrintStyle* printStyle, 
+	uint8_t* hPadding, 
+	uint8_t* vPadding
+);

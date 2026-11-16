@@ -4,10 +4,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
-
 #include "./cDB_Table.h"
 
-cDB_Table* cDB_Table_init(const uint32_t maxAttribute, const uint32_t maxRecord)
+cDB_Table* cDB_Table_new(const uint64_t maxAttribute, const uint64_t maxRecord, const char* name)
 {
 
     // Allocate the master table container struct on the heap
@@ -16,6 +15,13 @@ cDB_Table* cDB_Table_init(const uint32_t maxAttribute, const uint32_t maxRecord)
 
     t->maxAttribute = maxAttribute;
     t->maxRecord = maxRecord;
+
+    if (name) {
+        strncpy((char*)t->name, name, sizeof(t->name) - 1);
+        ((char*)t->name)[sizeof(t->name) - 1] = '\0';
+    } else {
+        ((char*)t->name)[0] = '\0';
+    }
 
     // Allocate trackers
     t->AttributeSizes = (size_t*)calloc(maxAttribute, sizeof(size_t));
@@ -60,11 +66,11 @@ void cDB_Table_destroy(cDB_Table* t)
 }
 
 
-uint32_t cDB_Table_getAttributeIdx(cDB_Table* t, const char* alias)
+uint64_t cDB_Table_getAttributeIdx(cDB_Table* t, const char* alias)
 {
-    if(!t || !alias) return UINT32_MAX;
+    if(!t || !alias) return UINT64_MAX;
 
-    for(uint32_t i = 0; i < t->maxAttribute; i++)
+    for(uint64_t i = 0; i < t->maxAttribute; i++)
     {
         if(strcmp(t->AttributeAlias[i], alias) == 0)
         {
@@ -72,15 +78,15 @@ uint32_t cDB_Table_getAttributeIdx(cDB_Table* t, const char* alias)
         }
     }
 
-    return UINT32_MAX;
+    return UINT64_MAX;
 
 };
 
-uint32_t cDB_Table_getRecordIdx(cDB_Table* t, const char* alias)
+uint64_t cDB_Table_getRecordIdx(cDB_Table* t, const char* alias)
 {
-    if(!t || !alias) return UINT32_MAX;
+    if(!t || !alias) return UINT64_MAX;
 
-    for(uint32_t i = 0; i < t->maxRecord; i++)
+    for(uint64_t i = 0; i < t->maxRecord; i++)
     {
         if(strcmp(t->RecordAlias[i], alias) == 0)
         {
@@ -88,29 +94,29 @@ uint32_t cDB_Table_getRecordIdx(cDB_Table* t, const char* alias)
         }
     }
 
-    return UINT32_MAX;
+    return UINT64_MAX;
 };
 
-void cDB_Table_setRecordAlias(cDB_Table* t, uint32_t RecordIdx, const char* alias)
+void cDB_Table_setRecordAlias(cDB_Table* t, uint64_t RecordIdx, const char* alias)
 {
     if(!t || !alias) return;
     if(RecordIdx >= t->maxRecord) return;
 
     strncpy(t->RecordAlias[RecordIdx], alias, 65);
-    t->RecordAlias[RecordIdx][64] = '\0';
+    t->RecordAlias[RecordIdx][65] = '\0';
 
 };
 
-void cDB_Table_setAttributeAlias(cDB_Table* t, uint32_t AttributeIdx, const char* alias)
+void cDB_Table_setAttributeAlias(cDB_Table* t, uint64_t AttributeIdx, const char* alias)
 {
     if(!t || !alias) return;
     if(AttributeIdx >= t->maxAttribute) return;
 
     strncpy(t->AttributeAlias[AttributeIdx], alias, 65);
-    t->AttributeAlias[AttributeIdx][64] = '\0';
+    t->AttributeAlias[AttributeIdx][65] = '\0';
 };
 
-void cDB_Table_setAttributeSize(cDB_Table* t, uint32_t AttributeIdx, size_t size)
+void cDB_Table_setAttributeSize(cDB_Table* t, uint64_t AttributeIdx, size_t size)
 {
     if(!t) return;
     if(size == 0) return;
@@ -120,7 +126,7 @@ void cDB_Table_setAttributeSize(cDB_Table* t, uint32_t AttributeIdx, size_t size
 };
 
 
-void cDB_Table_setRecord(cDB_Table* t, uint32_t RecordIdx, uint32_t AttributeIdx, void* data)
+void cDB_Table_setRecord(cDB_Table* t, uint64_t RecordIdx, uint64_t AttributeIdx, void* data)
 {
     if(!t || !data) return;
     if(AttributeIdx >= t->maxAttribute) return;
@@ -147,7 +153,7 @@ void cDB_Table_setRecord(cDB_Table* t, uint32_t RecordIdx, uint32_t AttributeIdx
 
 }
 
-void* cDB_Table_getRecord(cDB_Table* t, uint32_t RecordIdx, uint32_t AttributeIdx)
+void* cDB_Table_getRecord(cDB_Table* t, uint64_t RecordIdx, uint64_t AttributeIdx)
 {
     if(!t) return NULL;
     if(AttributeIdx >= t->maxAttribute) return NULL;
@@ -166,6 +172,8 @@ bool cDB_Table_fwrite(cDB_Table* t, FILE* f)
 {
     if(!t || !f) return false;
 
+	//writes metadata
+    
     fwrite(&t->maxAttribute, sizeof(uint32_t), 1, f);
     fwrite(&t->maxRecord, sizeof(uint32_t), 1, f);
 
@@ -202,18 +210,16 @@ bool cDB_Table_fread(cDB_Table* t, FILE* f)
 {
     if(!t || !f) return false;
 
-    // 1. Read core metadata dimensions 
-    // (Note: ensure 't' was already initialized with these max bounds, 
-    // or change this function to return a newly allocated table pointer!)
+    // Read core metadata dimensions 
     fread(&t->maxAttribute, sizeof(uint32_t), 1, f);
     fread(&t->maxRecord, sizeof(uint32_t), 1, f);
 
-    // 2. Read structural metadata and aliases
+    // Read structural metadata and aliases
     fread(t->AttributeSizes, sizeof(size_t), t->maxAttribute, f);
     fread(t->AttributeAlias, sizeof(char[65]), t->maxAttribute, f);
     fread(t->RecordAlias, sizeof(char[65]), t->maxRecord, f);
 
-    // 3. Read column data blocks
+    // Read column data blocks
     for(uint32_t i = 0; i < t->maxAttribute; i++)
     {
         size_t col_size = t->maxRecord * t->AttributeSizes[i];

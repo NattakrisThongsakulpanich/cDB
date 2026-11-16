@@ -1,652 +1,682 @@
+#include <stdbool.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdio.h>
 
-#include "cDB.h"
-#include "./safefOC.h"
-#include "cDB_Table.h"
+#include "./cDB_Table.h"
+#include "./cDB.h"
 
-const char MAGIC_BYTE[12] = {0x64, 0x65, 0x31, 0x77, 0x68, 0x6f, 0x61, 0x73, 0x6b, 0x65, 0x64, '\0'};
+const char MAGIC_BYTE[12] = {0x64, 0x65, 0x31, 0x77, 0x68, 0x6f, 0x61, 0x73, 0x6b, 0x65, 0x64, '\0'}; 
 
-static size_t get_type_size(cDB_DataType type, size_t custom_size) {
-    switch (type) {
-        case CDB_TYPE_INT32:  return sizeof(int32_t);
-        case CDB_TYPE_INT64:  return sizeof(int64_t);
-        case CDB_TYPE_FLOAT:  return sizeof(float);
-        case CDB_TYPE_DOUBLE: return sizeof(double);
-        case CDB_TYPE_STRING: return custom_size > 0 ? custom_size : 64;
-        case CDB_TYPE_BYTES:  return custom_size > 0 ? custom_size : 8;
-        default: return 8;
-    }
+static inline size_t cDB_getDatatypeSize(cDB_Datatype type, size_t custom_size)
+{
+	switch (type) {
+		case CDB_INT32:   return sizeof(int32_t);
+		case CDB_INT64:   return sizeof(int64_t);
+		case CDB_UINT32:  return sizeof(uint32_t);
+		case CDB_UINT64:  return sizeof(uint64_t);
+		case CDB_FLOAT32: return sizeof(float);
+		case CDB_FLOAT64: return sizeof(double);
+		case CDB_STRING:  return custom_size > 0 ? custom_size : 64;
+		case CDB_CUSTOM:  return custom_size;
+		default:          return custom_size > 0 ? custom_size : sizeof(uint64_t);
+	}
 }
 
-cDB_Database* cDB_open(const char* name, uint32_t max_tables) {
-
-    if (!name || max_tables == 0) return NULL;
-
-    cDB_Database* db = (cDB_Database*)calloc(1, sizeof(cDB_Database));
-    if (!db) return NULL;
-
-    char filename[128];
-    snprintf(filename, sizeof(filename), "%s.cdb", name);
-
-    FILE* cdbFile = safe_fopen(filename, "rb");
-    if (!cdbFile) {
-        // File does not exist yet -> initialize fresh database
-        goto FRESH_ALLOCATION;
-    }
-
-    // MagicByte check
-    char magicbyte[sizeof(MAGIC_BYTE)];
-    if (fread(magicbyte, sizeof(char), sizeof(MAGIC_BYTE), cdbFile) != sizeof(MAGIC_BYTE) ||
-        memcmp(magicbyte, MAGIC_BYTE, sizeof(MAGIC_BYTE)) != 0) {
-        safe_fclose(cdbFile, filename);
-        goto FRESH_ALLOCATION;
-    }
-
-    // Reads Metadata (matches cDB_close: char[64], uint32_t, uint32_t)
-    if (fread(db->name, sizeof(char), 64, cdbFile) != 64 ||
-        fread(&db->max_tables, sizeof(uint32_t), 1, cdbFile) != 1 ||
-        fread(&db->table_count, sizeof(uint32_t), 1, cdbFile) != 1) {
-        safe_fclose(cdbFile, filename);
-        goto FRESH_ALLOCATION;
-    }
-
-    // Validate table limits
-    if (db->max_tables == 0 || db->table_count > db->max_tables) {
-        safe_fclose(cdbFile, filename);
-        goto FRESH_ALLOCATION;
-    }
-
-    // Ensure capacity accommodates at least the requested max_tables or stored max_tables
-    if (max_tables > db->max_tables) {
-        db->max_tables = max_tables;
-    }
-
-    db->table_names = (char(*)[64])calloc(db->max_tables, sizeof(char[64]));
-    db->tables = (cDB_Table**)calloc(db->max_tables, sizeof(cDB_Table*));    
-    db->attr_types = (cDB_DataType**)calloc(db->max_tables, sizeof(cDB_DataType*));
-
-    if (!db->table_names || !db->tables || !db->attr_types) {
-        safe_fclose(cdbFile, filename);
-        cDB_close(db);
-        return NULL;
-    }
-
-    for (uint32_t i = 0; i < db->table_count; i++)
-    {
-        uint32_t num_attrs = 0;
-        if (fread(db->table_names[i], sizeof(char), 64, cdbFile) != 64 ||
-            fread(&num_attrs, sizeof(uint32_t), 1, cdbFile) != 1) {
-            safe_fclose(cdbFile, filename);
-            cDB_close(db);
-            return NULL;
-        }
-
-        if (num_attrs > 0) {
-            db->attr_types[i] = (cDB_DataType*)calloc(num_attrs, sizeof(cDB_DataType));
-            if (!db->attr_types[i] ||
-                fread(db->attr_types[i], sizeof(cDB_DataType), num_attrs, cdbFile) != num_attrs) {
-                safe_fclose(cdbFile, filename);
-                cDB_close(db);
-                return NULL;
-            }
-
-            // Peek maxAttribute and maxRecord header from file to allocate table
-            uint32_t maxAttr = 0, maxRec = 0;
-            long header_pos = ftell(cdbFile);
-            if (fread(&maxAttr, sizeof(uint32_t), 1, cdbFile) != 1 ||
-                fread(&maxRec, sizeof(uint32_t), 1, cdbFile) != 1) {
-                safe_fclose(cdbFile, filename);
-                cDB_close(db);
-                return NULL;
-            }
-            fseek(cdbFile, header_pos, SEEK_SET);
-
-            db->tables[i] = cDB_Table_init(maxAttr, maxRec);
-            if (!db->tables[i] || !cDB_Table_fread(db->tables[i], cdbFile)) {
-                safe_fclose(cdbFile, filename);
-                cDB_close(db);
-                return NULL;
-            }
-        }
-    }
-
-    safe_fclose(cdbFile, filename);
-    return db;
-
-FRESH_ALLOCATION:
-
-    strncpy(db->name, name, sizeof(db->name) - 1);
-    db->max_tables = max_tables;
-    db->table_count = 0;
-    db->table_names = (char(*)[64])calloc(max_tables, sizeof(char[64]));
-    db->tables = (cDB_Table**)calloc(max_tables, sizeof(cDB_Table*));    
-    db->attr_types = (cDB_DataType**)calloc(max_tables, sizeof(cDB_DataType*));
-
-    if (!db->table_names || !db->tables || !db->attr_types) {
-        cDB_close(db);
-        return NULL;
-    }
-    return db;
+// initialize a cDB fsm
+void cDB_clearResult(cDB_Database* db)
+{
+	if (!db) return;
+	if (db->qResult.inCondRecords) {
+		free(db->qResult.inCondRecords);
+		db->qResult.inCondRecords = NULL;
+	}
+	db->qResult.nResult = 0;
 }
 
-void cDB_close(cDB_Database* db) {
+cDB_Database* cDB_Init()
+{
+	cDB_Database* db = (cDB_Database*)malloc(sizeof(cDB_Database));
+	if(!db) return NULL;
 
-    if (!db) return;
+	db->table = NULL;
+	db->qResult.inCondRecords = NULL;
+	db->qResult.nResult = 0;
+	db->isSaved = true;
 
-    // Write database metadata & tables to file if database name is valid
-    if (db->name[0] != '\0') {
-        char filename[128];
-        snprintf(filename, sizeof(filename), "%s.cdb", db->name);
+	return db;
+};
 
-        FILE* cdbFile = safe_fopen(filename, "wb");
-        if (cdbFile != NULL) {
-            // 1. Write DB Header:MagicBytes: de1whoasked, Database Name (fixed 64 bytes), max_tables, table_count
-            fwrite(MAGIC_BYTE, sizeof(MAGIC_BYTE), 1, cdbFile);
-            fwrite(db->name, sizeof(char), 64, cdbFile);
-            fwrite(&db->max_tables, sizeof(uint32_t), 1, cdbFile);
-            fwrite(&db->table_count, sizeof(uint32_t), 1, cdbFile);
+bool cDB_Save(cDB_Database* db, const char filename[65])
+{
+	if (!db || !db->table) return false;
 
-            // 2. Write each table's schema and attribute content
-            for (uint32_t i = 0; i < db->table_count; i++) {
-                // Table Name (fixed 64 bytes)
-                fwrite(db->table_names[i], sizeof(char), 64, cdbFile);
+	const char* target_file = filename;
+	char filename_cdb[128];
+	if (!target_file || target_file[0] == '\0') {
+		if (db->table->name[0] != '\0') {
+			snprintf(filename_cdb, sizeof(filename_cdb), "%s.cdb", db->table->name);
+			target_file = filename_cdb;
+		} else {
+			return false;
+		}
+	}
 
-                cDB_Table* t = db->tables[i];
-                if (t != NULL) {
-                    // Attribute data types array
-                    uint32_t num_attrs = t->maxAttribute;
-                    fwrite(&num_attrs, sizeof(uint32_t), 1, cdbFile);
-                    if (db->attr_types[i] != NULL && num_attrs > 0) {
-                        fwrite(db->attr_types[i], sizeof(cDB_DataType), num_attrs, cdbFile);
-                    }
+	FILE* f = fopen(target_file, "wb");
+	if (!f) return false;
 
-                    // Write table payload via cDB_Table_fwrite
-                    cDB_Table_fwrite(t, cdbFile);
-                } else {
-                    // Empty/Null table placeholder
-                    uint32_t num_attrs = 0;
-                    fwrite(&num_attrs, sizeof(uint32_t), 1, cdbFile);
-                }
-            }
+	// Write magic byte header
+	if (fwrite(MAGIC_BYTE, sizeof(char), sizeof(MAGIC_BYTE), f) != sizeof(MAGIC_BYTE)) {
+		fclose(f);
+		return false;
+	}
 
-            safe_fclose(cdbFile, filename);
-        } else {
-            fprintf(stderr, "[cDB_close] Warning: Failed to open '%s' for saving.\n", filename);
-        }
-    }
+	bool ok = cDB_Table_fwrite(db->table, f);
+	fclose(f);
 
-    for (uint32_t i = 0; i < db->table_count; i++) {
-        if (db->tables[i]) {
-            cDB_Table_destroy(db->tables[i]);
-            db->tables[i] = NULL;
-        }
-        if (db->attr_types[i]) {
-            free(db->attr_types[i]);
-            db->attr_types[i] = NULL;
-        }
-    }
-    free(db->table_names);
-    free(db->tables);
-    free(db->attr_types);
-    free(db);
+	if (ok) {
+		db->isSaved = true;
+	}
+	return ok;
 }
 
-static int32_t find_table_idx(const cDB_Database* db, const char* table_name) {
-    if (!db || !table_name) return -1;
-    for (uint32_t i = 0; i < db->table_count; i++) {
-        if (strcmp(db->table_names[i], table_name) == 0) {
-            return (int32_t)i;
-        }
-    }
-    return -1;
+
+bool cDB_Open(cDB_Database* db, const char filename[65])
+{
+	if (!db || !filename || filename[0] == '\0') return false;
+
+	char filename_buf[128];
+	const char* target_file = filename;
+
+	FILE* f = fopen(target_file, "rb");
+	if (!f) {
+		// Try appending .cdb if not found directly
+		snprintf(filename_buf, sizeof(filename_buf), "%s.cdb", filename);
+		target_file = filename_buf;
+		f = fopen(target_file, "rb");
+		if (!f) return false;
+	}
+
+	// Validate magic bytes
+	char magic[sizeof(MAGIC_BYTE)];
+	if (fread(magic, sizeof(char), sizeof(MAGIC_BYTE), f) != sizeof(MAGIC_BYTE) ||
+	    memcmp(magic, MAGIC_BYTE, sizeof(MAGIC_BYTE)) != 0) {
+		fclose(f);
+		return false;
+	}
+
+	// Read table bounds from file stream to allocate table properly
+	long meta_pos = ftell(f);
+	uint32_t maxAttr = 0;
+	uint32_t maxRec = 0;
+	if (fread(&maxAttr, sizeof(uint32_t), 1, f) != 1 ||
+	    fread(&maxRec, sizeof(uint32_t), 1, f) != 1) {
+		fclose(f);
+		return false;
+	}
+
+	// Extract table name from filename
+	char tablename[65] = {0};
+	const char* base = strrchr(filename, '/');
+	if (!base) base = strrchr(filename, '\\');
+	base = (base) ? base + 1 : filename;
+	strncpy(tablename, base, 64);
+	tablename[64] = '\0';
+	char* dot = strrchr(tablename, '.');
+	if (dot && strcmp(dot, ".cdb") == 0) {
+		*dot = '\0';
+	}
+
+	// Allocate new table container
+	cDB_Table* t = cDB_Table_new(maxAttr, maxRec, tablename);
+	if (!t) {
+		fclose(f);
+		return false;
+	}
+
+	// Rewind to beginning of metadata for cDB_Table_fread
+	fseek(f, meta_pos, SEEK_SET);
+	if (!cDB_Table_fread(t, f)) {
+		cDB_Table_destroy(t);
+		fclose(f);
+		return false;
+	}
+
+	fclose(f);
+
+	// Flush current active table if unsaved and replace it
+	if (db->table) {
+		if (!db->isSaved && db->table->name[0] != '\0') {
+			cDB_Save(db, NULL);
+		}
+		cDB_Table_destroy(db->table);
+		db->table = NULL;
+	}
+
+	cDB_clearResult(db);
+
+	db->table = t;
+	db->isSaved = true;
+
+	return true;
 }
 
-bool cDB_create_table
+void cDB_Close(cDB_Database* db)
+{
+	if (!db) return;
+
+	if (db->table) {
+		if (!db->isSaved && db->table->name[0] != '\0') {
+			cDB_Save(db, NULL);
+		}
+		cDB_Table_destroy(db->table);
+		db->table = NULL;
+	}
+
+	cDB_clearResult(db);
+
+	free(db);
+}
+
+bool cDB_newTable(cDB_Database* db, const char name[STD_CDB_STRLEN], const uint32_t maxRecord, const uint32_t maxAttribute)
+{
+	if(!db || !name || maxRecord == 0 || maxAttribute == 0) return false;
+
+	// Flush current active table if unsaved and has a valid name
+	if (db->table)
+	{
+		if (!db->isSaved && db->table->name[0] != '\0')
+		{
+			cDB_Save(db, NULL);
+		}
+		cDB_Table_destroy(db->table);
+		db->table = NULL;
+	}
+
+	cDB_clearResult(db);
+
+	cDB_Table* t = cDB_Table_new(maxAttribute, maxRecord, name);
+	if(!t) return false;
+
+	db->table = t;
+	db->isSaved = true;
+
+	return true;	
+};
+
+// Attribute Promise helpers and resolution
+cDB_Attribute cDB_createAttribute(cDB_Database* db, const char alias[STD_CDB_STRLEN], cDB_Datatype type, size_t custom_size)
+{
+	cDB_Attribute promise = {0};
+	promise.isValid = false;
+	promise.idx = UINT64_MAX;
+
+	if (!db || !db->table || !alias || alias[0] == '\0') return promise;
+
+	// Check if attribute already exists
+	uint64_t existing_idx = cDB_Table_getAttributeIdx(db->table, alias);
+	uint64_t target_idx = existing_idx;
+
+	if (target_idx == UINT64_MAX) {
+		// Find first free attribute slot
+		for (uint64_t i = 0; i < db->table->maxAttribute; i++) {
+			if (db->table->AttributeAlias[i][0] == '\0') {
+				target_idx = i;
+				break;
+			}
+		}
+	}
+
+	if (target_idx == UINT64_MAX || target_idx >= db->table->maxAttribute) {
+		return promise; // Table attribute capacity full
+	}
+
+	size_t size = cDB_getDatatypeSize(type, custom_size);
+	if (size == 0) return promise;
+
+	cDB_Table_setAttributeAlias(db->table, target_idx, alias);
+	cDB_Table_setAttributeSize(db->table, target_idx, size);
+
+	strncpy(promise.name, alias, sizeof(promise.name) - 1);
+	promise.name[sizeof(promise.name) - 1] = '\0';
+	promise.idx = target_idx;
+	promise.size = size;
+	promise.type = type;
+	promise.isValid = true;
+
+	db->isSaved = false;
+	return promise;
+}
+
+cDB_Attribute cDB_getAttribute(cDB_Database* db, const char alias[STD_CDB_STRLEN])
+{
+	cDB_Attribute promise = {0};
+	promise.isValid = false;
+	promise.idx = UINT64_MAX;
+
+	if (!db || !db->table || !alias || alias[0] == '\0') return promise;
+
+	uint64_t idx = cDB_Table_getAttributeIdx(db->table, alias);
+	if (idx == UINT64_MAX || idx >= db->table->maxAttribute) {
+		return promise;
+	}
+
+	strncpy(promise.name, alias, sizeof(promise.name) - 1);
+	promise.name[sizeof(promise.name) - 1] = '\0';
+	promise.idx = idx;
+	promise.size = db->table->AttributeSizes[idx];
+	promise.type = CDB_CUSTOM;
+	promise.isValid = true;
+
+	return promise;
+}
+
+cDB_Record cDB_getRecord(cDB_Database* db, const char alias[STD_CDB_STRLEN])
+{
+	if(!db || !db->table || !alias) return UINT64_MAX;
+
+	return cDB_Table_getRecordIdx(db->table, alias);
+}
+
+void cDB_setAttributeAlias(cDB_Database *db, cDB_Attribute attrib, const char alias[STD_CDB_STRLEN])
+{
+	if(!db || !db->table || !attrib.isValid) return;
+
+	cDB_Table_setAttributeAlias(db->table, attrib.idx, alias);
+	db->isSaved = false;
+}
+
+void cDB_setRecordAlias(cDB_Database *db, cDB_Record record, const char alias[STD_CDB_STRLEN])
+{
+	if(!db || !db->table) return;
+
+	cDB_Table_setRecordAlias(db->table, record, alias);
+	db->isSaved = false;
+}
+
+void cDB_setRecordValue(cDB_Database* db, cDB_Record record, cDB_Attribute attrib, void* data)
+{
+	if (!db || !db->table || !attrib.isValid || !data) return;
+
+	cDB_Table_setRecord(db->table, record, attrib.idx, data);
+	db->isSaved = false;
+}
+
+void* cDB_getRecordValue(cDB_Database* db, cDB_Record record, cDB_Attribute attrib)
+{
+	if (!db || !db->table || !attrib.isValid) return NULL;
+
+	return cDB_Table_getRecord(db->table, record, attrib.idx);
+}
+
+bool cDB_select(cDB_Database* db, cDB_Predicate predicate, void* user_data)
+{
+	if (!db || !db->table) return false;
+
+	cDB_clearResult(db);
+
+	if (db->table->maxRecord == 0) return true;
+
+	cDB_Record* matches = (cDB_Record*)malloc(db->table->maxRecord * sizeof(cDB_Record));
+	if (!matches) return false;
+
+	uint64_t count = 0;
+	for (uint64_t r = 0; r < db->table->maxRecord; r++) {
+		// Skip empty/unassigned record slots
+		if (db->table->RecordAlias[r][0] == '\0') continue;
+
+		if (!predicate || predicate(db, r, user_data)) {
+			matches[count++] = r;
+		}
+	}
+
+	if (count > 0) {
+		cDB_Record* resized = (cDB_Record*)realloc(matches, count * sizeof(cDB_Record));
+		db->qResult.inCondRecords = resized ? resized : matches;
+		db->qResult.nResult = count;
+	} else {
+		free(matches);
+		db->qResult.inCondRecords = NULL;
+		db->qResult.nResult = 0;
+	}
+
+	return true;
+}
+
+cDB_Record cDB_resultGetRecord(const cDB_Database* db, uint64_t result_idx)
+{
+	if (!db || !db->qResult.inCondRecords || result_idx >= db->qResult.nResult) {
+		return UINT64_MAX;
+	}
+	return db->qResult.inCondRecords[result_idx];
+}
+
+uint64_t cDB_resultLen(const cDB_Database* db)
+{
+	if(!db) return UINT64_MAX;
+	return db->qResult.nResult;
+}
+
+void* cDB_resultGetValue(cDB_Database* db, uint64_t result_idx, cDB_Attribute attrib)
+{
+	cDB_Record rec = cDB_resultGetRecord(db, result_idx);
+	if (rec == UINT64_MAX) return NULL;
+
+	return cDB_getRecordValue(db, rec, attrib);
+}
+
+void cDB_freeProjection(cDB_Projection* proj)
+{
+	if (!proj) return;
+	if (proj->projRecords) {
+		free(proj->projRecords);
+		proj->projRecords = NULL;
+	}
+	if (proj->projAttributes) {
+		free(proj->projAttributes);
+		proj->projAttributes = NULL;
+	}
+	free(proj);
+}
+
+cDB_Projection* cDB_getProjection(cDB_Database* db, cDB_Record* records, uint64_t nRecords, const uint64_t* attrib_indices, uint64_t nAttributes)
+{
+	if (!db || !db->table) return NULL;
+
+	cDB_Projection* proj = (cDB_Projection*)malloc(sizeof(cDB_Projection));
+	if (!proj) return NULL;
+
+	proj->nRecords = nRecords;
+	proj->nAttributes = nAttributes;
+	proj->projRecords = NULL;
+	proj->projAttributes = NULL;
+
+	if (nAttributes > 0) {
+		proj->projAttributes = (uint64_t*)malloc(nAttributes * sizeof(uint64_t));
+		if (!proj->projAttributes) {
+			free(proj);
+			return NULL;
+		}
+
+		if (attrib_indices) {
+			memcpy(proj->projAttributes, attrib_indices, nAttributes * sizeof(uint64_t));
+		} else {
+			// If attrib_indices is NULL, take sequential attribute indices 0..nAttributes-1
+			for (uint64_t i = 0; i < nAttributes; i++) {
+				proj->projAttributes[i] = i;
+			}
+		}
+	}
+
+	if (nRecords > 0) {
+		proj->projRecords = (cDB_Record*)malloc(nRecords * sizeof(cDB_Record));
+		if (!proj->projRecords) {
+			if (proj->projAttributes) free(proj->projAttributes);
+			free(proj);
+			return NULL;
+		}
+
+		if (records) {
+			memcpy(proj->projRecords, records, nRecords * sizeof(cDB_Record));
+		} else {
+			// If records is NULL, take sequential records 0..nRecords-1
+			for (uint64_t i = 0; i < nRecords; i++) {
+				proj->projRecords[i] = i;
+			}
+		}
+	}
+
+	return proj;
+}
+
+cDB_Projection* cDB_getResultProjection(cDB_Database* db)
+{
+	if (!db || !db->table) return NULL;
+
+	// Collect all active attributes in the table
+	uint64_t active_attrs = 0;
+	for (uint64_t i = 0; i < db->table->maxAttribute; i++) {
+		if (db->table->AttributeAlias[i][0] != '\0') {
+			active_attrs++;
+		}
+	}
+
+	if (active_attrs == 0) return NULL;
+
+	uint64_t* attr_list = (uint64_t*)malloc(active_attrs * sizeof(uint64_t));
+	if (!attr_list) return NULL;
+
+	uint64_t k = 0;
+	for (uint64_t i = 0; i < db->table->maxAttribute; i++) {
+		if (db->table->AttributeAlias[i][0] != '\0') {
+			attr_list[k++] = i;
+		}
+	}
+
+	cDB_Projection* proj = cDB_getProjection(db, db->qResult.inCondRecords, db->qResult.nResult, attr_list, active_attrs);
+	free(attr_list);
+
+	return proj;
+}
+
+cDB_Projection* cDB_getTableProjection(cDB_Database* db)
+{
+	if (!db || !db->table) return NULL;
+
+	// Collect active records
+	uint64_t active_recs = 0;
+	for (uint64_t r = 0; r < db->table->maxRecord; r++) {
+		if (db->table->RecordAlias[r][0] != '\0') {
+			active_recs++;
+		}
+	}
+
+	// Collect active attributes
+	uint64_t active_attrs = 0;
+	for (uint64_t a = 0; a < db->table->maxAttribute; a++) {
+		if (db->table->AttributeAlias[a][0] != '\0') {
+			active_attrs++;
+		}
+	}
+
+	if (active_attrs == 0 || active_recs == 0) return NULL;
+
+	cDB_Record* rec_list = (cDB_Record*)malloc(active_recs * sizeof(cDB_Record));
+	uint64_t* attr_list = (uint64_t*)malloc(active_attrs * sizeof(uint64_t));
+	if (!rec_list || !attr_list) {
+		if (rec_list) free(rec_list);
+		if (attr_list) free(attr_list);
+		return NULL;
+	}
+
+	uint64_t r_count = 0;
+	for (uint64_t r = 0; r < db->table->maxRecord; r++) {
+		if (db->table->RecordAlias[r][0] != '\0') {
+			rec_list[r_count++] = r;
+		}
+	}
+
+	uint64_t a_count = 0;
+	for (uint64_t a = 0; a < db->table->maxAttribute; a++) {
+		if (db->table->AttributeAlias[a][0] != '\0') {
+			attr_list[a_count++] = a;
+		}
+	}
+
+	cDB_Projection* proj = cDB_getProjection(db, rec_list, active_recs, attr_list, active_attrs);
+	free(rec_list);
+	free(attr_list);
+
+	return proj;
+}
+
+static void print_horizontal_border
 (
-    cDB_Database* db, 
-    const char* table_name, 
-    const cDB_AttributeDef* attrs, 
-    uint32_t num_attrs, 
-    uint32_t max_records
+	const char left_corner, 
+	const char fill_line,
+	const char mid_joint, 
+	const char right_corner, 
+	const uint32_t* col_widths, 
+	uint64_t nCols, uint8_t pad_h
 )
 {
-    if (!db || !table_name || !attrs || num_attrs == 0 || max_records == 0) return false;
-    if (db->table_count >= db->max_tables) return false;
-    if (find_table_idx(db, table_name) >= 0) return false; // Table already exists
-
-    uint32_t tidx = db->table_count;
-    cDB_Table* t = cDB_Table_init(num_attrs, max_records);
-    if (!t) return false;
-
-    cDB_DataType* types = (cDB_DataType*)calloc(num_attrs, sizeof(cDB_DataType));
-    if (!types) {
-        cDB_Table_destroy(t);
-        return false;
-    }
-
-    for (uint32_t i = 0; i < num_attrs; i++) {
-        cDB_Table_setAttributeAlias(t, i, attrs[i].name);
-        size_t sz = get_type_size(attrs[i].type, attrs[i].size);
-        cDB_Table_setAttributeSize(t, i, sz);
-        types[i] = attrs[i].type;
-    }
-
-    strncpy(db->table_names[tidx], table_name, sizeof(db->table_names[tidx]) - 1);
-    db->tables[tidx] = t;
-    db->attr_types[tidx] = types;
-    db->table_count++;
-
-    return true;
+	putchar(left_corner);
+	for (uint64_t c = 0; c < nCols; c++) {
+		uint32_t total_w = col_widths[c] + (pad_h * 2);
+		for (uint32_t i = 0; i < total_w; i++) {
+			putchar(fill_line);
+		}
+		if (c + 1 < nCols) {
+			putchar(mid_joint);
+		}
+	}
+	putchar(right_corner);
+	putchar('\n');
 }
 
-bool cDB_drop_table(cDB_Database* db, const char* table_name) {
-    int32_t idx = find_table_idx(db, table_name);
-    if (idx < 0) return false;
-
-    uint32_t tidx = (uint32_t)idx;
-    if (db->tables[tidx]) cDB_Table_destroy(db->tables[tidx]);
-    if (db->attr_types[tidx]) free(db->attr_types[tidx]);
-
-    // Shift remaining tables
-    for (uint32_t i = tidx; i + 1 < db->table_count; i++) {
-        memcpy(db->table_names[i], db->table_names[i + 1], sizeof(char[64]));
-        db->tables[i] = db->tables[i + 1];
-        db->attr_types[i] = db->attr_types[i + 1];
-    }
-    db->table_count--;
-    return true;
-}
-
-int64_t cDB_insert(cDB_Database* db, const char* table_name, const char* record_alias, const void** values) {
-    int32_t idx = find_table_idx(db, table_name);
-    if (idx < 0 || !values) return -1;
-
-    cDB_Table* t = db->tables[idx];
-
-    // Find the next available record slot
-    uint32_t target_record = UINT32_MAX;
-    for (uint32_t r = 0; r < t->maxRecord; r++) {
-        if (t->RecordAlias[r][0] == '\0') {
-            target_record = r;
-            break;
-        }
-    }
-
-    if (target_record == UINT32_MAX) return -1; // Table full
-
-    // Set record alias if provided, or default to record index
-    if (record_alias && record_alias[0] != '\0') {
-        cDB_Table_setRecordAlias(t, target_record, record_alias);
-    } else {
-        char auto_alias[64];
-        snprintf(auto_alias, sizeof(auto_alias), "record_%u", target_record);
-        cDB_Table_setRecordAlias(t, target_record, auto_alias);
-    }
-
-    // Set attribute values
-    for (uint32_t c = 0; c < t->maxAttribute; c++) {
-        if (values[c] != NULL) {
-            cDB_Table_setRecord(t, target_record, c, (void*)values[c]);
-        }
-    }
-
-    return (int64_t)target_record;
-}
-
-static int compare_values(const void* record_val, const void* cond_val, cDB_DataType type) {
-    if (!record_val && !cond_val) return 0;
-    if (!record_val) return -1;
-    if (!cond_val) return 1;
-
-    switch (type) {
-        case CDB_TYPE_INT32: {
-            int32_t a = *(const int32_t*)record_val;
-            int32_t b = *(const int32_t*)cond_val;
-            return (a > b) - (a < b);
-        }
-        case CDB_TYPE_INT64: {
-            int64_t a = *(const int64_t*)record_val;
-            int64_t b = *(const int64_t*)cond_val;
-            return (a > b) - (a < b);
-        }
-        case CDB_TYPE_FLOAT: {
-            float a = *(const float*)record_val;
-            float b = *(const float*)cond_val;
-            return (a > b) - (a < b);
-        }
-        case CDB_TYPE_DOUBLE: {
-            double a = *(const double*)record_val;
-            double b = *(const double*)cond_val;
-            return (a > b) - (a < b);
-        }
-        case CDB_TYPE_STRING: {
-            return strcmp((const char*)record_val, (const char*)cond_val);
-        }
-        default:
-            return 0;
-    }
-}
-
-static bool check_condition(cDB_Table* t, cDB_DataType* types, uint32_t record_idx, const cDB_Condition* cond) {
-    if (!cond) return true; // No WHERE clause matches all
-
-    uint32_t attr_idx = cDB_Table_getAttributeIdx(t, cond->attr_name);
-    if (attr_idx == UINT32_MAX) return false;
-
-    void* val_ptr = cDB_Table_getRecord(t, record_idx, attr_idx);
-    if (!val_ptr) return false;
-
-    int cmp = compare_values(val_ptr, cond->val, types[attr_idx]);
-
-    switch (cond->op) {
-        case CDB_OP_EQ:  return cmp == 0;
-        case CDB_OP_NEQ: return cmp != 0;
-        case CDB_OP_LT:  return cmp < 0;
-        case CDB_OP_LTE: return cmp <= 0;
-        case CDB_OP_GT:  return cmp > 0;
-        case CDB_OP_GTE: return cmp >= 0;
-        default: return false;
-    }
-}
-
-static bool check_compound_condition(cDB_Table* t, cDB_DataType* types, uint32_t record_idx, const cDB_CompoundCond* comp) {
-    if (!comp || comp->count == 0) return true; // Empty compound condition matches all
-
-    // Evaluate first clause
-    bool current_result = check_condition(t, types, record_idx, &comp->clauses[0].cond);
-
-    for (uint32_t i = 0; i < comp->count - 1; i++) {
-        cDB_LogicConnective op = comp->clauses[i].next_op;
-        bool next_match = check_condition(t, types, record_idx, &comp->clauses[i + 1].cond);
-
-        if (op == CDB_LOGIC_AND) {
-            current_result = current_result && next_match;
-        } else if (op == CDB_LOGIC_OR) {
-            current_result = current_result || next_match;
-        }
-    }
-
-    return current_result;
-}
-
-cDB_CompoundCond* cDB_compound_init(void) {
-    cDB_CompoundCond* comp = (cDB_CompoundCond*)calloc(1, sizeof(cDB_CompoundCond));
-    if (!comp) return NULL;
-    comp->capacity = 4;
-    comp->clauses = (cDB_CompoundClause*)calloc(comp->capacity, sizeof(cDB_CompoundClause));
-    if (!comp->clauses) {
-        free(comp);
-        return NULL;
-    }
-    comp->count = 0;
-    return comp;
-}
-
-void cDB_compound_free(cDB_CompoundCond* comp) {
-    if (!comp) return;
-    if (comp->clauses) free(comp->clauses);
-    free(comp);
-}
-
-void cDB_compound_add(cDB_CompoundCond* comp, cDB_Condition cond, cDB_LogicConnective next_op) {
-    if (!comp) return;
-    if (comp->count >= comp->capacity) {
-        comp->capacity *= 2;
-        comp->clauses = (cDB_CompoundClause*)realloc(comp->clauses, comp->capacity * sizeof(cDB_CompoundClause));
-        if (!comp->clauses) return;
-    }
-    comp->clauses[comp->count].cond = cond;
-    comp->clauses[comp->count].next_op = next_op;
-    comp->count++;
-}
-
-cDB_ResultSet* cDB_select_compound(cDB_Database* db, const char* table_name, const cDB_CompoundCond* comp) {
-    int32_t idx = find_table_idx(db, table_name);
-    if (idx < 0) return NULL;
-
-    uint32_t tidx = (uint32_t)idx;
-    cDB_Table* t = db->tables[tidx];
-
-    cDB_ResultSet* res = (cDB_ResultSet*)calloc(1, sizeof(cDB_ResultSet));
-    if (!res) return NULL;
-
-    res->db = db;
-    res->table_idx = tidx;
-    res->capacity = 16;
-    res->record_indices = (uint32_t*)malloc(res->capacity * sizeof(uint32_t));
-    res->count = 0;
-
-    for (uint32_t r = 0; r < t->maxRecord; r++) {
-        if (t->RecordAlias[r][0] == '\0') continue;
-
-        if (check_compound_condition(t, db->attr_types[tidx], r, comp)) {
-            if (res->count >= res->capacity) {
-                res->capacity *= 2;
-                res->record_indices = (uint32_t*)realloc(res->record_indices, res->capacity * sizeof(uint32_t));
-            }
-            res->record_indices[res->count++] = r;
-        }
-    }
-
-    return res;
-}
-
-uint32_t cDB_update_compound(cDB_Database* db, const char* table_name, const char* target_attr, const void* new_val, const cDB_CompoundCond* comp) {
-    int32_t idx = find_table_idx(db, table_name);
-    if (idx < 0 || !target_attr || !new_val) return 0;
-
-    uint32_t tidx = (uint32_t)idx;
-    cDB_Table* t = db->tables[tidx];
-    uint32_t attr_idx = cDB_Table_getAttributeIdx(t, target_attr);
-    if (attr_idx == UINT32_MAX) return 0;
-
-    uint32_t updated_count = 0;
-    for (uint32_t r = 0; r < t->maxRecord; r++) {
-        if (t->RecordAlias[r][0] == '\0') continue;
-
-        if (check_compound_condition(t, db->attr_types[tidx], r, comp)) {
-            cDB_Table_setRecord(t, r, attr_idx, (void*)new_val);
-            updated_count++;
-        }
-    }
-    return updated_count;
-}
-
-uint32_t cDB_delete_compound(cDB_Database* db, const char* table_name, const cDB_CompoundCond* comp) {
-    int32_t idx = find_table_idx(db, table_name);
-    if (idx < 0) return 0;
-
-    uint32_t tidx = (uint32_t)idx;
-    cDB_Table* t = db->tables[tidx];
-
-    uint32_t deleted_count = 0;
-    for (uint32_t r = 0; r < t->maxRecord; r++) {
-        if (t->RecordAlias[r][0] == '\0') continue;
-
-        if (check_compound_condition(t, db->attr_types[tidx], r, comp)) {
-            t->RecordAlias[r][0] = '\0';
-            for (uint32_t c = 0; c < t->maxAttribute; c++) {
-                void* rec = cDB_Table_getRecord(t, r, c);
-                if (rec) {
-                    memset(rec, 0, t->AttributeSizes[c]);
-                }
-            }
-            deleted_count++;
-        }
-    }
-    return deleted_count;
-}
-
-cDB_ResultSet* cDB_select(cDB_Database* db, const char* table_name, const cDB_Condition* cond) {
-    int32_t idx = find_table_idx(db, table_name);
-    if (idx < 0) return NULL;
-
-    uint32_t tidx = (uint32_t)idx;
-    cDB_Table* t = db->tables[tidx];
-
-    cDB_ResultSet* res = (cDB_ResultSet*)calloc(1, sizeof(cDB_ResultSet));
-    if (!res) return NULL;
-
-    res->db = db;
-    res->table_idx = tidx;
-    res->capacity = 16;
-    res->record_indices = (uint32_t*)malloc(res->capacity * sizeof(uint32_t));
-    res->count = 0;
-
-    for (uint32_t r = 0; r < t->maxRecord; r++) {
-        // Only active/named records
-        if (t->RecordAlias[r][0] == '\0') continue;
-
-        if (check_condition(t, db->attr_types[tidx], r, cond)) {
-            if (res->count >= res->capacity) {
-                res->capacity *= 2;
-                res->record_indices = (uint32_t*)realloc(res->record_indices, res->capacity * sizeof(uint32_t));
-            }
-            res->record_indices[res->count++] = r;
-        }
-    }
-
-    return res;
-}
-
-void cDB_free_result(cDB_ResultSet* res) {
-    if (!res) return;
-    if (res->record_indices) free(res->record_indices);
-    free(res);
-}
-
-const void* cDB_result_get(const cDB_ResultSet* res, uint32_t result_record_idx, const char* attr_name) {
-    if (!res || result_record_idx >= res->count) return NULL;
-    cDB_Table* t = res->db->tables[res->table_idx];
-    uint32_t attr_idx = cDB_Table_getAttributeIdx(t, attr_name);
-    if (attr_idx == UINT32_MAX) return NULL;
-
-    uint32_t actual_record = res->record_indices[result_record_idx];
-    return cDB_Table_getRecord(t, actual_record, attr_idx);
-}
-
-int32_t cDB_result_get_int32(const cDB_ResultSet* res, uint32_t result_record_idx, const char* attr_name, int32_t default_val) {
-    const void* ptr = cDB_result_get(res, result_record_idx, attr_name);
-    return ptr ? *(const int32_t*)ptr : default_val;
-}
-
-int64_t cDB_result_get_int64(const cDB_ResultSet* res, uint32_t result_record_idx, const char* attr_name, int64_t default_val) {
-    const void* ptr = cDB_result_get(res, result_record_idx, attr_name);
-    return ptr ? *(const int64_t*)ptr : default_val;
-}
-
-double cDB_result_get_double(const cDB_ResultSet* res, uint32_t result_record_idx, const char* attr_name, double default_val) {
-    const void* ptr = cDB_result_get(res, result_record_idx, attr_name);
-    return ptr ? *(const double*)ptr : default_val;
-}
-
-const char* cDB_result_get_string(const cDB_ResultSet* res, uint32_t result_record_idx, const char* attr_name) {
-    const void* ptr = cDB_result_get(res, result_record_idx, attr_name);
-    return ptr ? (const char*)ptr : "";
-}
-
-uint32_t cDB_update(cDB_Database* db, const char* table_name, const char* target_attr, const void* new_val, const cDB_Condition* cond) {
-    int32_t idx = find_table_idx(db, table_name);
-    if (idx < 0 || !target_attr || !new_val) return 0;
-
-    uint32_t tidx = (uint32_t)idx;
-    cDB_Table* t = db->tables[tidx];
-    uint32_t attr_idx = cDB_Table_getAttributeIdx(t, target_attr);
-    if (attr_idx == UINT32_MAX) return 0;
-
-    uint32_t updated_count = 0;
-    for (uint32_t r = 0; r < t->maxRecord; r++) {
-        if (t->RecordAlias[r][0] == '\0') continue;
-
-        if (check_condition(t, db->attr_types[tidx], r, cond)) {
-            cDB_Table_setRecord(t, r, attr_idx, (void*)new_val);
-            updated_count++;
-        }
-    }
-    return updated_count;
-}
-
-uint32_t cDB_delete(cDB_Database* db, const char* table_name, const cDB_Condition* cond) {
-    int32_t idx = find_table_idx(db, table_name);
-    if (idx < 0) return 0;
-
-    uint32_t tidx = (uint32_t)idx;
-    cDB_Table* t = db->tables[tidx];
-
-    uint32_t deleted_count = 0;
-    for (uint32_t r = 0; r < t->maxRecord; r++) {
-        if (t->RecordAlias[r][0] == '\0') continue;
-
-        if (check_condition(t, db->attr_types[tidx], r, cond)) {
-            // Clear alias
-            t->RecordAlias[r][0] = '\0';
-            // Clear data in all attributes for this record
-            for (uint32_t c = 0; c < t->maxAttribute; c++) {
-                void* rec = cDB_Table_getRecord(t, r, c);
-                if (rec) {
-                    memset(rec, 0, t->AttributeSizes[c]);
-                }
-            }
-            deleted_count++;
-        }
-    }
-    return deleted_count;
-}
-
-void cDB_print_result(const cDB_ResultSet* res) {
-    if (!res) {
-        printf("(NULL Result Set)\n");
-        return;
-    }
-
-    cDB_Table* t = res->db->tables[res->table_idx];
-    cDB_DataType* types = res->db->attr_types[res->table_idx];
-
-    printf("+-------------------------------------------------------------------------+\n");
-    printf("| Rec | Alias                | ");
-    for (uint32_t c = 0; c < t->maxAttribute; c++) {
-        printf("%-15s | ", t->AttributeAlias[c]);
-    }
-    printf("\n+-------------------------------------------------------------------------+\n");
-
-    for (uint32_t i = 0; i < res->count; i++) {
-        uint32_t r = res->record_indices[i];
-        printf("| %-3u | %-20s | ", r, t->RecordAlias[r]);
-
-        for (uint32_t c = 0; c < t->maxAttribute; c++) {
-            void* val = cDB_Table_getRecord(t, r, c);
-            if (!val) {
-                printf("%-15s | ", "NULL");
-                continue;
-            }
-
-            switch (types[c]) {
-                case CDB_TYPE_INT32:
-                    printf("%-15d | ", *(int32_t*)val);
-                    break;
-                case CDB_TYPE_INT64:
-                    printf("%-15lld | ", (long long)*(int64_t*)val);
-                    break;
-                case CDB_TYPE_FLOAT:
-                    printf("%-15.2f | ", *(float*)val);
-                    break;
-                case CDB_TYPE_DOUBLE:
-                    printf("%-15.2f | ", *(double*)val);
-                    break;
-                case CDB_TYPE_STRING:
-                    printf("%-15s | ", (char*)val);
-                    break;
-                default:
-                    printf("%-15s | ", "[BINARY]");
-                    break;
-            }
-        }
-        printf("\n");
-    }
-    printf("+-------------------------------------------------------------------------+\n");
-    printf("(%u records returned)\n\n", res->count);
+void cDB_printProjection
+(
+	const cDB_Database* db, 
+	const cDB_Projection* proj, 
+	bool hSeperator, 
+	bool vSeperator, 
+	cDB_PrintStyle* printStyle, 
+	uint8_t* hPadding, uint8_t* vPadding
+)
+{
+	if (!db || !db->table || !proj) return;
+
+	cDB_PrintStyle style = { '+', '+', '+', '+', '|', '-' };
+	if (printStyle) {
+		style = *printStyle;
+	}
+
+	uint8_t pad_h = hPadding ? *hPadding : 1;
+	uint8_t pad_v = vPadding ? *vPadding : 0;
+
+	uint64_t totalCols = 1 + proj->nAttributes;
+	uint32_t* col_widths = (uint32_t*)malloc(totalCols * sizeof(uint32_t));
+	if (!col_widths) return;
+
+	// Initial widths from headers
+	col_widths[0] = (uint32_t)strlen("RECORD");
+	for (uint64_t j = 0; j < proj->nAttributes; j++) {
+		uint64_t attr_idx = proj->projAttributes[j];
+		const char* attr_name = (attr_idx < db->table->maxAttribute) ? db->table->AttributeAlias[attr_idx] : "UNKNOWN";
+		col_widths[1 + j] = (uint32_t)strlen(attr_name);
+	}
+
+	// Calculate widths from records
+	for (uint64_t i = 0; i < proj->nRecords; i++) {
+		cDB_Record r = proj->projRecords[i];
+		const char* rec_alias = (r < db->table->maxRecord) ? db->table->RecordAlias[r] : "";
+		char rec_label[STD_CDB_STRLEN];
+		if (rec_alias && rec_alias[0] != '\0') {
+			snprintf(rec_label, sizeof(rec_label), "%s (%llu)", rec_alias, (unsigned long long)r);
+		} else {
+			snprintf(rec_label, sizeof(rec_label), "%llu", (unsigned long long)r);
+		}
+		uint32_t r_len = (uint32_t)strlen(rec_label);
+		if (r_len > col_widths[0]) col_widths[0] = r_len;
+
+		for (uint64_t j = 0; j < proj->nAttributes; j++) {
+			uint64_t attr_idx = proj->projAttributes[j];
+			void* val = cDB_Table_getRecord(db->table, r, attr_idx);
+			uint32_t v_len = val ? (uint32_t)strlen((char*)val) : 4; // "NULL"
+			if (v_len > col_widths[1 + j]) col_widths[1 + j] = v_len;
+		}
+	}
+
+	char v_char = vSeperator ? style.VerticalLine : ' ';
+	char mid_h = vSeperator ? '+' : style.HorizontalLine;
+
+	// Top border
+	print_horizontal_border(style.UpperLeft_Corner, style.HorizontalLine, mid_h, style.UpperRight_Corner, col_widths, totalCols, pad_h);
+
+	// Column header
+	putchar(v_char);
+	for (uint8_t p = 0; p < pad_h; p++) putchar(' ');
+	printf("%-*s", (int)col_widths[0], "RECORD");
+	for (uint8_t p = 0; p < pad_h; p++) putchar(' ');
+
+	for (uint64_t j = 0; j < proj->nAttributes; j++) {
+		putchar(v_char);
+		uint64_t attr_idx = proj->projAttributes[j];
+		const char* attr_name = (attr_idx < db->table->maxAttribute) ? db->table->AttributeAlias[attr_idx] : "UNKNOWN";
+		for (uint8_t p = 0; p < pad_h; p++) putchar(' ');
+		printf("%-*s", (int)col_widths[1 + j], attr_name);
+		for (uint8_t p = 0; p < pad_h; p++) putchar(' ');
+	}
+	putchar(v_char);
+	putchar('\n');
+
+	// Header bottom border
+	print_horizontal_border('+', style.HorizontalLine, mid_h, '+', col_widths, totalCols, pad_h);
+
+	// Rows
+	for (uint64_t i = 0; i < proj->nRecords; i++) {
+		// Vertical top padding
+		for (uint8_t vp = 0; vp < pad_v; vp++) {
+			putchar(v_char);
+			for (uint64_t c = 0; c < totalCols; c++) {
+				for (uint32_t s = 0; s < col_widths[c] + (pad_h * 2); s++) putchar(' ');
+				if (c + 1 < totalCols) putchar(v_char);
+			}
+			putchar(v_char);
+			putchar('\n');
+		}
+
+		cDB_Record r = proj->projRecords[i];
+		const char* rec_alias = (r < db->table->maxRecord) ? db->table->RecordAlias[r] : "";
+		char rec_label[STD_CDB_STRLEN];
+		if (rec_alias && rec_alias[0] != '\0') {
+			snprintf(rec_label, sizeof(rec_label), "%s (%llu)", rec_alias, (unsigned long long)r);
+		} else {
+			snprintf(rec_label, sizeof(rec_label), "%llu", (unsigned long long)r);
+		}
+
+		putchar(v_char);
+		for (uint8_t p = 0; p < pad_h; p++) putchar(' ');
+		printf("%-*s", (int)col_widths[0], rec_label);
+		for (uint8_t p = 0; p < pad_h; p++) putchar(' ');
+
+		for (uint64_t j = 0; j < proj->nAttributes; j++) {
+			putchar(v_char);
+			uint64_t attr_idx = proj->projAttributes[j];
+			void* val = cDB_Table_getRecord(db->table, r, attr_idx);
+			for (uint8_t p = 0; p < pad_h; p++) putchar(' ');
+			if (!val) {
+				printf("%-*s", (int)col_widths[1 + j], "NULL");
+			} else {
+				printf("%-*s", (int)col_widths[1 + j], (char*)val);
+			}
+			for (uint8_t p = 0; p < pad_h; p++) putchar(' ');
+		}
+		putchar(v_char);
+		putchar('\n');
+
+		// Vertical bottom padding
+		for (uint8_t vp = 0; vp < pad_v; vp++) {
+			putchar(v_char);
+			for (uint64_t c = 0; c < totalCols; c++) {
+				for (uint32_t s = 0; s < col_widths[c] + (pad_h * 2); s++) putchar(' ');
+				if (c + 1 < totalCols) putchar(v_char);
+			}
+			putchar(v_char);
+			putchar('\n');
+		}
+
+		// Optional row separator
+		if (hSeperator && (i + 1 < proj->nRecords)) {
+			print_horizontal_border(mid_h, style.HorizontalLine, mid_h, mid_h, col_widths, totalCols, pad_h);
+		}
+	}
+
+	// Bottom border
+	print_horizontal_border(style.LowerLeft_Corner, style.HorizontalLine, mid_h, style.LowerRight_Corner, col_widths, totalCols, pad_h);
+	putchar('\n');
+
+	free(col_widths);
 }
