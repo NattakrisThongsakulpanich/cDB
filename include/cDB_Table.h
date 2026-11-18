@@ -28,14 +28,14 @@ void cDB_Table_destroy(cDB_Table* t);
 // Gets
 uint64_t cDB_Table_getAttributeIdx(cDB_Table* t, const char* alias);
 uint64_t cDB_Table_getRecordIdx(cDB_Table* t, const char* alias);
-void* cDB_Table_getRecord(cDB_Table* t, uint64_t RecordIdx, uint64_t AttributeIdx);
+void* cDB_Table_get(cDB_Table* t, uint64_t RecordIdx, uint64_t AttributeIdx);
 void* cDB_Table_getAttribProjection(cDB_Table* t, uint64_t AttributeIdx);
 
 // Sets
 void cDB_Table_setRecordAlias(cDB_Table* t, uint64_t RecordIdx, const char* alias);
 void cDB_Table_setAttributeAlias(cDB_Table* t, uint64_t AttributeIdx, const char* alias);
 void cDB_Table_setAttributeSize(cDB_Table* t, uint64_t AttributeIdx, size_t size);
-void cDB_Table_setRecord(cDB_Table* t, uint64_t RecordIdx, uint64_t AttributeIdx, void* data);
+void cDB_Table_set(cDB_Table* t, uint64_t RecordIdx, uint64_t AttributeIdx, void* data);
 
 // IO
 bool cDB_Table_fwrite(cDB_Table* t, FILE* f);

@@ -4,7 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
-#include "./cDB_Table.h"
+
+#include "../include/cDB_Table.h"
 
 cDB_Table* cDB_Table_new(const uint64_t maxAttribute, const uint64_t maxRecord, const char* name)
 {
@@ -103,7 +104,7 @@ void cDB_Table_setRecordAlias(cDB_Table* t, uint64_t RecordIdx, const char* alia
     if(RecordIdx >= t->maxRecord) return;
 
     strncpy(t->RecordAlias[RecordIdx], alias, 65);
-    t->RecordAlias[RecordIdx][65] = '\0';
+    t->RecordAlias[RecordIdx][64] = '\0';
 
 };
 
@@ -113,7 +114,7 @@ void cDB_Table_setAttributeAlias(cDB_Table* t, uint64_t AttributeIdx, const char
     if(AttributeIdx >= t->maxAttribute) return;
 
     strncpy(t->AttributeAlias[AttributeIdx], alias, 65);
-    t->AttributeAlias[AttributeIdx][65] = '\0';
+    t->AttributeAlias[AttributeIdx][64] = '\0';
 };
 
 void cDB_Table_setAttributeSize(cDB_Table* t, uint64_t AttributeIdx, size_t size)
@@ -126,7 +127,7 @@ void cDB_Table_setAttributeSize(cDB_Table* t, uint64_t AttributeIdx, size_t size
 };
 
 
-void cDB_Table_setRecord(cDB_Table* t, uint64_t RecordIdx, uint64_t AttributeIdx, void* data)
+void cDB_Table_set(cDB_Table* t, uint64_t RecordIdx, uint64_t AttributeIdx, void* data)
 {
     if(!t || !data) return;
     if(AttributeIdx >= t->maxAttribute) return;
@@ -153,7 +154,7 @@ void cDB_Table_setRecord(cDB_Table* t, uint64_t RecordIdx, uint64_t AttributeIdx
 
 }
 
-void* cDB_Table_getRecord(cDB_Table* t, uint64_t RecordIdx, uint64_t AttributeIdx)
+void* cDB_Table_get(cDB_Table* t, uint64_t RecordIdx, uint64_t AttributeIdx)
 {
     if(!t) return NULL;
     if(AttributeIdx >= t->maxAttribute) return NULL;
@@ -179,6 +180,7 @@ bool cDB_Table_fwrite(cDB_Table* t, FILE* f)
 
     fwrite(t->AttributeSizes, sizeof(size_t), t->maxAttribute, f);
 
+    // this save all alias all at once
     fwrite(t->AttributeAlias, sizeof(char[65]), t->maxAttribute, f);
     fwrite(t->RecordAlias, sizeof(char[65]), t->maxRecord, f);
 
