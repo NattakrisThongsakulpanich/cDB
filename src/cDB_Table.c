@@ -142,7 +142,7 @@ void cDB_Table_setAttributeSize(cDB_Table* t, uint64_t AttributeIdx, size_t size
 };
 
 
-void cDB_Table_set(cDB_Table* t, uint64_t RecordIdx, uint64_t AttributeIdx, void* data)
+void cDB_Table_set(cDB_Table* t, uint64_t RecordIdx, uint64_t AttributeIdx, const void* data)
 {
     if(!t || !data) return;
     if(AttributeIdx >= t->maxAttribute) return;
@@ -229,7 +229,7 @@ bool cDB_Table_fread(cDB_Table* t, FILE* f)
     if(!t || !f) return false;
 
     // Read core metadata dimensions
-    fseek(f, 65, SEEK_CUR); //skips it's name
+    fread((void*)t->name, sizeof(char), 65, f);
     fread(&t->maxAttribute, sizeof(uint32_t), 1, f);
     fread(&t->maxRecord, sizeof(uint32_t), 1, f);
 
@@ -293,7 +293,11 @@ cDB_Table* cDB_Table_fromf(FILE* f)
         {
             // Allocate memory for this column's data block
             t->data[i] = malloc(col_size);
-            if (!t->data[i]) return NULL; // Out of memory
+            if (!t->data[i])
+            { 
+                cDB_Table_destroy(t);
+                return NULL; // Out of memory
+            }
 
             // READ from file into memory (Fixed from fwrite!)
             fread(t->data[i], 1, col_size, f);

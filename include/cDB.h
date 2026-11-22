@@ -7,7 +7,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <float.h>
-#include <xkeycheck.h>
 
 #include "./cDB_Table.h"
 
@@ -15,9 +14,11 @@ extern const char MAGIC_BYTE[12]; /* use to verify a .cdb file*/
 #define STD_CDB_STRLEN 65 /* 64+1 reserve for '\0' */
 #define CDB_OUT_OF_RANGE uint64_t
 #define cDB_Record uint64_t
+#define CDB_PRINT_MAX_COL_WIDTH 40
 
 typedef enum
 {
+	CDB_CUSTOM,
 	CDB_BOOL,
 	CDB_INT32,
 	CDB_INT64,
@@ -26,7 +27,6 @@ typedef enum
 	CDB_FLOAT32,
 	CDB_FLOAT64,
 	CDB_STRING,
-	CDB_CUSTOM,
 } cDB_Datatype;
 
 typedef enum
@@ -102,7 +102,7 @@ void cDB_setRecordAlias(cDB_Database *db, cDB_Record record, const char alias[ST
 
 //-----------------------------------Value access----------------------------------------
 // set
-void cDB_set_t(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib, void* data);
+void cDB_set_t(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib, const void* data);
 // Typed set
 void cDB_set_BOOL(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib, const bool data);
 void cDB_set_I32(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib, const int32_t data);
@@ -114,7 +114,7 @@ void cDB_set_F64(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib, con
 void cDB_set_STR(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib, const char* data); // This copy string until '\0' is found
 // get
 void* cDB_get_t(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib);
-// Typed set
+// Typed get
 bool 		cDB_get_BOOL(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib);
 int32_t 	cDB_get_I32(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib);
 int64_t 	cDB_get_I64(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib);
@@ -140,11 +140,10 @@ const cDB_Result* cDB_getResult(const cDB_Database* db);
 cDB_Projection* cDB_getProjection(cDB_Database* db, cDB_Record* records, uint64_t nRecords, const uint64_t* attrib_indices, uint64_t nAttributes);
 cDB_Projection* cDB_getRProjection(cDB_Database* db); // get Result Projection
 cDB_Projection* cDB_getTProjection(cDB_Database* db); // get Table Projection
-bool cDB_Proj2CSV(cDB_Database *db, const cDB_Projection *proj, const char *filename);
 void cDB_freeProjection(cDB_Projection* proj);
 void cDB_printProjection(
-	const cDB_Database* db, 
-	const cDB_Projection* proj, 
+	cDB_Database* db, 
+	cDB_Projection* proj, 
 	bool hSeperator, 
 	bool vSeperator, 
 	cDB_PrintStyle* printStyle
