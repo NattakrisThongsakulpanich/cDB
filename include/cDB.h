@@ -48,7 +48,7 @@ typedef struct
 typedef struct
 {
 	char name[CDB_STD_STRLEN];
-	uint64_t idx;
+	uint64_t index;
 	size_t size;
 	cDB_Datatype type;
 	bool isValid;
@@ -56,23 +56,23 @@ typedef struct
 
 typedef struct
 {
-	cDB_Record* projRecords; // an Array of Record associated with a query
-	uint64_t* projAttributes; // pointer to the projected attributes associated with a query
-	uint64_t nRecords; // number of records in this projection
-	uint64_t nAttributes; // number of Attributes in this projection
+	cDB_Record* projectedRecords; // an Array of Record associated with a query
+	uint64_t* projectedAttributes; // pointer to the projected attributes associated with a query
+	uint64_t recordCount; // number of records in this projection
+	uint64_t attributeCount; // number of Attributes in this projection
 } cDB_Projection;
 
 typedef struct
 {
-	cDB_Record* inCondRecords; // Records with condition met
-	uint64_t nResult; // number of Results
+	cDB_Record* matchingRecords; // Records with condition met
+	uint64_t resultCount; // number of Results
 } cDB_Result;
 
 typedef struct
 {
 	cDB_Table* table; 
-	cDB_Result qResult; // result from select
-	cDB_Datatype* typeRef;
+	cDB_Result result; // result from select
+	cDB_Datatype* type_ref;
 	bool isSaved;
 } cDB_Database;
 
@@ -137,7 +137,7 @@ const cDB_Result* cdb_getResult(const cDB_Database* db);
 //----------------------------------projections------------------------------------
 
 // Projections & Printing
-cDB_Projection* cdb_CreateProjection(cDB_Database* db, cDB_Record* records, uint64_t nRecords, const uint64_t* attrib_indices, uint64_t nAttributes);
+cDB_Projection* cdb_CreateProjection(cDB_Database* db, cDB_Record* records, uint64_t recordCount, const uint64_t* attrib_indices, uint64_t attributeCount);
 cDB_Projection* cdb_CreateResultProjection(cDB_Database* db); // get Result Projection
 cDB_Projection* cdb_CreateTableProjection(cDB_Database* db); // get Table Projection
 void cdb_freeProjection(cDB_Projection* proj);

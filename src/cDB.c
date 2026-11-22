@@ -83,10 +83,10 @@ cDB_Database* cdb_Create()
 	if(!db) return NULL;
 
 	db->table = NULL;
-	db->qResult.inCondRecords = NULL;
-	db->qResult.nResult = 0;
+	db->result.matchingRecords = NULL;
+	db->result.resultCount = 0;
 	db->isSaved = true;
-	db->typeRef = NULL;
+	db->type_ref = NULL;
 
 	return db;
 };
@@ -103,10 +103,10 @@ void cdb_Destroy(cDB_Database* db)
 		db->table = NULL;
 	}
 
-	if(db->typeRef)
+	if(db->type_ref)
 	{
-		free(db->typeRef);
-		db->typeRef = NULL;
+		free(db->type_ref);
+		db->type_ref = NULL;
 	}
 
 	cdb_clearResult(db);
@@ -148,7 +148,7 @@ bool cdb_save(cDB_Database* db, const char filename[65])
 	bool ok = cdb_table_writeFile(db->table, f);
 
 	//type reference
-	fwrite(db->typeRef, sizeof(cDB_Datatype), db->table->attributeCapacity, f);
+	fwrite(db->type_ref, sizeof(cDB_Datatype), db->table->attributeCapacity, f);
 
 	fclose(f);
 
@@ -216,14 +216,14 @@ bool cdb_open(cDB_Database* db, const char filename[65])
 	}
 
 	//new typerefs
-	cDB_Datatype* typeRef = (cDB_Datatype*)calloc(t->attributeCapacity, sizeof(cDB_Datatype));
-	if(!typeRef)
+	cDB_Datatype* type_ref = (cDB_Datatype*)calloc(t->attributeCapacity, sizeof(cDB_Datatype));
+	if(!type_ref)
 	{
 		cdb_table_Destroy(t);
 		fclose(f);
 		return false;	
 	}
-	fread(typeRef, sizeof(cDB_Datatype), t->attributeCapacity, f);
+	fread(type_ref, sizeof(cDB_Datatype), t->attributeCapacity, f);
 
 	fclose(f);
 
@@ -234,10 +234,10 @@ bool cdb_open(cDB_Database* db, const char filename[65])
 		}
 		cdb_table_Destroy(db->table);
 		db->table = NULL;
-		if(db->typeRef)
+		if(db->type_ref)
 		{
-			free(db->typeRef);
-			db->typeRef = NULL;
+			free(db->type_ref);
+			db->type_ref = NULL;
 		}
 	}
 
@@ -245,7 +245,7 @@ bool cdb_open(cDB_Database* db, const char filename[65])
 
 	db->table = t;
 	db->isSaved = true;
-	db->typeRef = typeRef;
+	db->type_ref = type_ref;
 
 	return true;
 }
@@ -264,9 +264,9 @@ bool cdb_exportCSV(cDB_Database *db, const cDB_Projection *proj, const char *fil
 
 	// 1. Write Header row: RECORD, ATTRIB_0, ATTRIB_1, ...
 	write_rfc4180_field(fptr, "RECORD");
-	for (uint64_t j = 0; j < proj->nAttributes; j++) {
+	for (uint64_t j = 0; j < proj->attributeCount; j++) {
 		fputc(',', fptr);
-		uint64_t attr_idx = proj->projAttributes[j];
+		uint64_t attr_idx = proj->projectedAttributes[j];
 		const char* attr_name = (attr_idx < db->table->attributeCapacity) ? db->table->attributeNames[attr_idx] : "";
 		write_rfc4180_field(fptr, attr_name);
 	}
@@ -274,8 +274,8 @@ bool cdb_exportCSV(cDB_Database *db, const cDB_Projection *proj, const char *fil
 	fputs("\r\n", fptr);
 
 	// 2. Write Data rows
-	for (uint64_t i = 0; i < proj->nRecords; i++) {
-		cDB_Record r = proj->projRecords[i];
+	for (uint64_t i = 0; i < proj->recordCount; i++) {
+		cDB_Record r = proj->projectedRecords[i];
 		const char* rec_alias = (r < db->table->recordCapacity) ? db->table->recordNames[r] : "";
 		char rec_label[CDB_STD_STRLEN];
 		if (rec_alias && rec_alias[0] != '\0') {
@@ -286,7 +286,7 @@ bool cdb_exportCSV(cDB_Database *db, const cDB_Projection *proj, const char *fil
 
 		write_rfc4180_field(fptr, rec_label);
 
-		for (uint64_t j = 0; j < proj->nAttributes; j++) {
+		for (uint64_t j = 0; j < proj->attributeCount; j++) {
 
 			fputc(',', fptr);
 
@@ -331,8 +331,8 @@ bool cdb_CreateTable(cDB_Database* db, const char name[CDB_STD_STRLEN], const ui
 	cDB_Table* t = cdb_table_Create(attributeCapacity, recordCapacity, name);
 	if(!t) return false;
 
-	cDB_Datatype* typeRef = (cDB_Datatype*)calloc(attributeCapacity, sizeof(cDB_Datatype)); //this default to customs
-	if(!typeRef)
+	cDB_Datatype* type_ref = (cDB_Datatype*)calloc(attributeCapacity, sizeof(cDB_Datatype)); //this default to customs
+	if(!type_ref)
 	{
 		cdb_table_Destroy(t);
 		return false;
@@ -340,7 +340,7 @@ bool cdb_CreateTable(cDB_Database* db, const char name[CDB_STD_STRLEN], const ui
 
 	db->table 	= t;
 	db->isSaved = true;
-	db->typeRef = typeRef;
+	db->type_ref = type_ref;
 
 	return true;	
 };
@@ -351,7 +351,7 @@ cDB_Attribute cdb_CreateAttribute(cDB_Database* db, const char alias[CDB_STD_STR
 {
 	cDB_Attribute promise = {0};
 	promise.isValid = false;
-	promise.idx = UINT64_MAX;
+	promise.index = UINT64_MAX;
 
 	if (!db || !db->table || !alias || alias[0] == '\0') return promise;
 
@@ -381,14 +381,14 @@ cDB_Attribute cdb_CreateAttribute(cDB_Database* db, const char alias[CDB_STD_STR
 
 	strncpy(promise.name, alias, sizeof(promise.name) - 1);
 	promise.name[sizeof(promise.name) - 1] = '\0';
-	promise.idx = target_idx;
+	promise.index = target_idx;
 	promise.size = size;
 	promise.type = type;
 	promise.isValid = true;
 
-	if(db->typeRef)
+	if(db->type_ref)
 	{
-		db->typeRef[target_idx] = type;
+		db->type_ref[target_idx] = type;
 	}
 
 	db->isSaved = false;
@@ -399,20 +399,20 @@ cDB_Attribute cdb_getAttribute(cDB_Database* db, const char alias[CDB_STD_STRLEN
 {
 	cDB_Attribute promise = {0};
 	promise.isValid = false;
-	promise.idx = UINT64_MAX;
+	promise.index = UINT64_MAX;
 
 	if (!db || !db->table || !alias || alias[0] == '\0') return promise;
 
-	uint64_t idx = cdb_table_getAttributeIndex(db->table, alias);
-	if (idx == UINT64_MAX || idx >= db->table->attributeCapacity) {
+	uint64_t index = cdb_table_getAttributeIndex(db->table, alias);
+	if (index == UINT64_MAX || index >= db->table->attributeCapacity) {
 		return promise;
 	}
 
 	strncpy(promise.name, alias, sizeof(promise.name) - 1);
 	promise.name[sizeof(promise.name) - 1] = '\0';
-	promise.idx = idx;
-	promise.size = db->table->attributeSizes[idx];
-	promise.type = db->typeRef[idx];
+	promise.index = index;
+	promise.size = db->table->attributeSizes[index];
+	promise.type = db->type_ref[index];
 	promise.isValid = true;
 
 	return promise;
@@ -422,15 +422,15 @@ cDB_Attribute cdb_getAttribute_byIndex(cDB_Database* db, uint64_t attrib_idx)
 {
 	cDB_Attribute promise = {0};
 	promise.isValid = false;
-	promise.idx = UINT64_MAX;
+	promise.index = UINT64_MAX;
 
 	if (!db || !db->table || attrib_idx >= db->table->attributeCapacity) return promise;
 
 	cdb_table_copyAttributeName(db->table, attrib_idx, promise.name);
 	promise.name[sizeof(promise.name) - 1] = '\0';
-	promise.idx = attrib_idx;
+	promise.index = attrib_idx;
 	promise.size = db->table->attributeSizes[attrib_idx];
-	promise.type = db->typeRef[attrib_idx];
+	promise.type = db->type_ref[attrib_idx];
 	promise.isValid = true;
 
 	return promise;
@@ -440,7 +440,7 @@ void cdb_setAttributeName(cDB_Database *db, cDB_Attribute* attrib, const char al
 {
 	if(!db || !db->table || !attrib->isValid) return;
 
-	cdb_table_setAttributeName(db->table, attrib->idx, alias);
+	cdb_table_setAttributeName(db->table, attrib->index, alias);
 	db->isSaved = false;
 }
 
@@ -470,7 +470,7 @@ void cdb_set_t(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib, const
 {
 	if (!db || !db->table || !attrib->isValid || !data) return;
 
-	cdb_table_set(db->table, record, attrib->idx, data);
+	cdb_table_set(db->table, record, attrib->index, data);
 	db->isSaved = false;
 }
 
@@ -520,19 +520,19 @@ void cdb_set_f64(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib, con
 void cdb_set_string(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib, const char* data)
 {
 	if(!db || !db->table || !attrib->isValid || !data) return;
-	if(record >= db->table->recordCapacity || attrib->idx >= db->table->attributeCapacity) return;
+	if(record >= db->table->recordCapacity || attrib->index >= db->table->attributeCapacity) return;
 	if(attrib->type != CDB_STRING) return;
 
-	size_t max_size = db->table->attributeSizes[attrib->idx];
+	size_t max_size = db->table->attributeSizes[attrib->index];
 	if(max_size == 0) return;
 
-	if(db->table->data[attrib->idx] == NULL)
+	if(db->table->data[attrib->index] == NULL)
 	{
-		db->table->data[attrib->idx] = calloc(db->table->recordCapacity, max_size);
-		if(!db->table->data[attrib->idx]) return;
+		db->table->data[attrib->index] = calloc(db->table->recordCapacity, max_size);
+		if(!db->table->data[attrib->index]) return;
 	}
 
-	char* dest = (char*)db->table->data[attrib->idx] + (record * max_size);
+	char* dest = (char*)db->table->data[attrib->index] + (record * max_size);
 	strncpy(dest, data, max_size - 1);
 	dest[max_size - 1] = '\0';
 	db->isSaved = false;
@@ -543,7 +543,7 @@ void* cdb_get_t(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib)
 {
 	if (!db || !db->table || !attrib->isValid) return NULL;
 
-	return cdb_table_get(db->table, record, attrib->idx);
+	return cdb_table_get(db->table, record, attrib->index);
 }
 
 // Typed get
@@ -662,11 +662,11 @@ uint64_t cdb_format_value(cDB_Database* db, cDB_Record record, cDB_Attribute* at
 void cdb_clearResult(cDB_Database* db)
 {
 	if (!db) return;
-	if (db->qResult.inCondRecords) {
-		free(db->qResult.inCondRecords);
-		db->qResult.inCondRecords = NULL;
+	if (db->result.matchingRecords) {
+		free(db->result.matchingRecords);
+		db->result.matchingRecords = NULL;
 	}
-	db->qResult.nResult = 0;
+	db->result.resultCount = 0;
 }
 
 bool cdb_select(cDB_Database* db, cDB_Predicate predicate, void* user_data)
@@ -692,12 +692,12 @@ bool cdb_select(cDB_Database* db, cDB_Predicate predicate, void* user_data)
 
 	if (count > 0) {
 		cDB_Record* resized = (cDB_Record*)realloc(matches, count * sizeof(cDB_Record));
-		db->qResult.inCondRecords = resized ? resized : matches;
-		db->qResult.nResult = count;
+		db->result.matchingRecords = resized ? resized : matches;
+		db->result.resultCount = count;
 	} else {
 		free(matches);
-		db->qResult.inCondRecords = NULL;
-		db->qResult.nResult = 0;
+		db->result.matchingRecords = NULL;
+		db->result.resultCount = 0;
 	}
 
 	return true;
@@ -705,72 +705,72 @@ bool cdb_select(cDB_Database* db, cDB_Predicate predicate, void* user_data)
 
 bool cdb_copyResult(const cDB_Database* db, cDB_Result* dst)
 {
-	if (!db || !db->qResult.inCondRecords || !dst) 
+	if (!db || !db->result.matchingRecords || !dst) 
 	{
 		return false;
 	}
 	
-	memcpy(dst->inCondRecords, db->qResult.inCondRecords, db->qResult.nResult * sizeof(uint64_t));
-	dst->nResult = db->qResult.nResult;
+	memcpy(dst->matchingRecords, db->result.matchingRecords, db->result.resultCount * sizeof(uint64_t));
+	dst->resultCount = db->result.resultCount;
 
 	return true;
 }
 
 const cDB_Result* cdb_getResult(const cDB_Database* db)
 {
-	if (!db || !db->qResult.inCondRecords) 
+	if (!db || !db->result.matchingRecords) 
 	{
 		return NULL;
 	}
 
-	return &(db->qResult);
+	return &(db->result);
 }
 
 //-----------------------------------projections----------------------------------------
 
-cDB_Projection* cdb_CreateProjection(cDB_Database* db, cDB_Record* records, uint64_t nRecords, const uint64_t* attrib_indices, uint64_t nAttributes)
+cDB_Projection* cdb_CreateProjection(cDB_Database* db, cDB_Record* records, uint64_t recordCount, const uint64_t* attrib_indices, uint64_t attributeCount)
 {
 	if (!db || !db->table) return NULL;
 
 	cDB_Projection* proj = (cDB_Projection*)malloc(sizeof(cDB_Projection));
 	if (!proj) return NULL;
 
-	proj->nRecords = nRecords;
-	proj->nAttributes = nAttributes;
-	proj->projRecords = NULL;
-	proj->projAttributes = NULL;
+	proj->recordCount = recordCount;
+	proj->attributeCount = attributeCount;
+	proj->projectedRecords = NULL;
+	proj->projectedAttributes = NULL;
 
-	if (nAttributes > 0) {
-		proj->projAttributes = (uint64_t*)malloc(nAttributes * sizeof(uint64_t));
-		if (!proj->projAttributes) {
+	if (attributeCount > 0) {
+		proj->projectedAttributes = (uint64_t*)malloc(attributeCount * sizeof(uint64_t));
+		if (!proj->projectedAttributes) {
 			free(proj);
 			return NULL;
 		}
 
 		if (attrib_indices) {
-			memcpy(proj->projAttributes, attrib_indices, nAttributes * sizeof(uint64_t));
+			memcpy(proj->projectedAttributes, attrib_indices, attributeCount * sizeof(uint64_t));
 		} else {
-			// If attrib_indices is NULL, take sequential attribute indices 0..nAttributes-1
-			for (uint64_t i = 0; i < nAttributes; i++) {
-				proj->projAttributes[i] = i;
+			// If attrib_indices is NULL, take sequential attribute indices 0..attributeCount-1
+			for (uint64_t i = 0; i < attributeCount; i++) {
+				proj->projectedAttributes[i] = i;
 			}
 		}
 	}
 
-	if (nRecords > 0) {
-		proj->projRecords = (cDB_Record*)malloc(nRecords * sizeof(cDB_Record));
-		if (!proj->projRecords) {
-			if (proj->projAttributes) free(proj->projAttributes);
+	if (recordCount > 0) {
+		proj->projectedRecords = (cDB_Record*)malloc(recordCount * sizeof(cDB_Record));
+		if (!proj->projectedRecords) {
+			if (proj->projectedAttributes) free(proj->projectedAttributes);
 			free(proj);
 			return NULL;
 		}
 
 		if (records) {
-			memcpy(proj->projRecords, records, nRecords * sizeof(cDB_Record));
+			memcpy(proj->projectedRecords, records, recordCount * sizeof(cDB_Record));
 		} else {
-			// If records is NULL, take sequential records 0..nRecords-1
-			for (uint64_t i = 0; i < nRecords; i++) {
-				proj->projRecords[i] = i;
+			// If records is NULL, take sequential records 0..recordCount-1
+			for (uint64_t i = 0; i < recordCount; i++) {
+				proj->projectedRecords[i] = i;
 			}
 		}
 	}
@@ -802,7 +802,7 @@ cDB_Projection* cdb_CreateResultProjection(cDB_Database* db)
 		}
 	}
 
-	cDB_Projection* proj = cdb_CreateProjection(db, db->qResult.inCondRecords, db->qResult.nResult, attr_list, active_attrs);
+	cDB_Projection* proj = cdb_CreateProjection(db, db->result.matchingRecords, db->result.resultCount, attr_list, active_attrs);
 	free(attr_list);
 
 	return proj;
@@ -862,13 +862,13 @@ cDB_Projection* cdb_CreateTableProjection(cDB_Database* db)
 void cdb_freeProjection(cDB_Projection* proj)
 {
 	if (!proj) return;
-	if (proj->projRecords) {
-		free(proj->projRecords);
-		proj->projRecords = NULL;
+	if (proj->projectedRecords) {
+		free(proj->projectedRecords);
+		proj->projectedRecords = NULL;
 	}
-	if (proj->projAttributes) {
-		free(proj->projAttributes);
-		proj->projAttributes = NULL;
+	if (proj->projectedAttributes) {
+		free(proj->projectedAttributes);
+		proj->projectedAttributes = NULL;
 	}
 	free(proj);
 }
@@ -913,22 +913,22 @@ void cdb_printProjection
 		style = *printStyle;
 	}
 
-	uint64_t totalCols = 1 + proj->nAttributes;
+	uint64_t totalCols = 1 + proj->attributeCount;
 	uint32_t* col_widths = (uint32_t*)malloc(totalCols * sizeof(uint32_t));
 	if (!col_widths) return;
 
 	// Pass 1: Initialize column widths with header lengths
 	col_widths[0] = (uint32_t)strlen("RECORD");
-	for (uint64_t j = 0; j < proj->nAttributes; j++) {
-		uint64_t attr_idx = proj->projAttributes[j];
+	for (uint64_t j = 0; j < proj->attributeCount; j++) {
+		uint64_t attr_idx = proj->projectedAttributes[j];
 		const char* attr_name = (attr_idx < db->table->attributeCapacity) ? db->table->attributeNames[attr_idx] : "UNKNOWN";
 		col_widths[1 + j] = (uint32_t)strlen(attr_name);
 	}
 
 	// Pass 1: Find longest formatted value per column
 	char buf[256];
-	for (uint64_t i = 0; i < proj->nRecords; i++) {
-		cDB_Record r = proj->projRecords[i];
+	for (uint64_t i = 0; i < proj->recordCount; i++) {
+		cDB_Record r = proj->projectedRecords[i];
 		const char* rec_alias = (r < db->table->recordCapacity) ? db->table->recordNames[r] : "";
 		char rec_label[CDB_STD_STRLEN];
 		if (rec_alias && rec_alias[0] != '\0') {
@@ -939,13 +939,13 @@ void cdb_printProjection
 		uint32_t r_len = (uint32_t)strlen(rec_label);
 		if (r_len > col_widths[0]) col_widths[0] = r_len;
 
-		for (uint64_t j = 0; j < proj->nAttributes; j++) {
-			uint64_t attr_idx = proj->projAttributes[j];
+		for (uint64_t j = 0; j < proj->attributeCount; j++) {
+			uint64_t attr_idx = proj->projectedAttributes[j];
 			if (attr_idx >= db->table->attributeCapacity) continue;
 
 			/*
 			cDB_Attribute attr = {0};
-			attr.idx = attr_idx;
+			attr.index = attr_idx;
 			attr.size = db->table->attributeSizes[attr_idx];
 			attr.type = infer_attr_type(attr.size);
 			strncpy(attr.name, db->table->attributeNames[attr_idx], CDB_STD_STRLEN - 1);
@@ -981,9 +981,9 @@ void cdb_printProjection
 	printf("%-*.*s", (int)col_widths[0], (int)col_widths[0], "RECORD");
 	putchar(' ');
 
-	for (uint64_t j = 0; j < proj->nAttributes; j++) {
+	for (uint64_t j = 0; j < proj->attributeCount; j++) {
 		putchar(v_char);
-		uint64_t attr_idx = proj->projAttributes[j];
+		uint64_t attr_idx = proj->projectedAttributes[j];
 		const char* attr_name = (attr_idx < db->table->attributeCapacity) ? db->table->attributeNames[attr_idx] : "UNKNOWN";
 		putchar(' ');
 		printf("%-*.*s", (int)col_widths[1 + j], (int)col_widths[1 + j], attr_name);
@@ -996,8 +996,8 @@ void cdb_printProjection
 	print_horizontal_border('+', style.HorizontalLine, mid_h, '+', col_widths, totalCols, pad_h);
 
 	// Pass 2: Print rows
-	for (uint64_t i = 0; i < proj->nRecords; i++) {
-		cDB_Record r = proj->projRecords[i];
+	for (uint64_t i = 0; i < proj->recordCount; i++) {
+		cDB_Record r = proj->projectedRecords[i];
 		const char* rec_alias = (r < db->table->recordCapacity) ? db->table->recordNames[r] : "";
 		char rec_label[CDB_STD_STRLEN];
 		if (rec_alias && rec_alias[0] != '\0') {
@@ -1011,14 +1011,14 @@ void cdb_printProjection
 		printf("%-*.*s", (int)col_widths[0], (int)col_widths[0], rec_label);
 		putchar(' ');
 
-		for (uint64_t j = 0; j < proj->nAttributes; j++) {
+		for (uint64_t j = 0; j < proj->attributeCount; j++) {
 			putchar(v_char);
-			uint64_t attr_idx = proj->projAttributes[j];
+			uint64_t attr_idx = proj->projectedAttributes[j];
 
 			/*
 			cDB_Attribute attr = {0};
 			if (attr_idx < db->table->attributeCapacity) {
-				attr.idx = attr_idx;
+				attr.index = attr_idx;
 				attr.size = db->table->attributeSizes[attr_idx];
 				attr.type = infer_attr_type(attr.size);
 				attr.isValid = true;
@@ -1038,7 +1038,7 @@ void cdb_printProjection
 		putchar('\n');
 
 		// Optional row separator
-		if (hSeperator && (i + 1 < proj->nRecords)) {
+		if (hSeperator && (i + 1 < proj->recordCount)) {
 			print_horizontal_border(mid_h, style.HorizontalLine, mid_h, mid_h, col_widths, totalCols, pad_h);
 		}
 	}
