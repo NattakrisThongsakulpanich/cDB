@@ -117,6 +117,21 @@ void cDB_Table_setAttributeAlias(cDB_Table* t, uint64_t AttributeIdx, const char
     t->AttributeAlias[AttributeIdx][64] = '\0';
 };
 
+void cDB_Table_cpyRecordAlias(cDB_Table* t, uint64_t RecordIdx, char* buffer)
+{
+    if(!t || RecordIdx >= t->maxRecord) return;
+
+    strncpy(buffer, t->RecordAlias[RecordIdx], 65);
+
+};
+
+void cDB_Table_cpyAttributeAlias(cDB_Table* t, uint64_t AttributeIdx, char* buffer)
+{
+    if(!t || AttributeIdx >= t->maxAttribute) return;
+
+    strncpy(buffer, t->AttributeAlias[AttributeIdx], 65);
+};
+
 void cDB_Table_setAttributeSize(cDB_Table* t, uint64_t AttributeIdx, size_t size)
 {
     if(!t) return;
@@ -174,12 +189,11 @@ bool cDB_Table_fwrite(cDB_Table* t, FILE* f)
     if(!t || !f) return false;
 
 	//writes metadata
-    
+    fwrite(&t->name, sizeof(char), 65, f);
     fwrite(&t->maxAttribute, sizeof(uint32_t), 1, f);
     fwrite(&t->maxRecord, sizeof(uint32_t), 1, f);
 
     fwrite(t->AttributeSizes, sizeof(size_t), t->maxAttribute, f);
-
     // this save all alias all at once
     fwrite(t->AttributeAlias, sizeof(char[65]), t->maxAttribute, f);
     fwrite(t->RecordAlias, sizeof(char[65]), t->maxRecord, f);
@@ -208,11 +222,14 @@ bool cDB_Table_fwrite(cDB_Table* t, FILE* f)
 
 };
 
+//**DEPRECATED**
+// * Have to guess or read the meta first before copy the data into a table so it's not safe.
 bool cDB_Table_fread(cDB_Table* t, FILE* f)
 {
     if(!t || !f) return false;
 
-    // Read core metadata dimensions 
+    // Read core metadata dimensions
+    fseek(f, 65, SEEK_CUR); //skips it's name
     fread(&t->maxAttribute, sizeof(uint32_t), 1, f);
     fread(&t->maxRecord, sizeof(uint32_t), 1, f);
 
@@ -242,4 +259,50 @@ bool cDB_Table_fread(cDB_Table* t, FILE* f)
     }
 
     return true;
+}
+
+//new function to replace Table_fread()
+cDB_Table* cDB_Table_fromf(FILE* f)
+{
+    if(!f) return NULL;
+
+    uint64_t maxAttribute = 0;
+    uint64_t maxRecord = 0;
+    char t_name[65];
+
+    // Read core metadata dimensions 
+    fread(&t_name, sizeof(char), 65, f);
+    fread(&maxAttribute, sizeof(uint32_t), 1, f);
+    fread(&maxRecord, sizeof(uint32_t), 1, f);
+
+    if(maxRecord == 0 || maxAttribute == 0) return NULL;
+
+    cDB_Table* t = cDB_Table_new(maxAttribute, maxRecord, t_name); //already set a max Record and Attribute and name in this section
+
+    // Read structural metadata and aliases
+    fread(t->AttributeSizes, sizeof(size_t), t->maxAttribute, f);
+    fread(t->AttributeAlias, sizeof(char[65]), t->maxAttribute, f);
+    fread(t->RecordAlias, sizeof(char[65]), t->maxRecord, f);
+
+    // Read column data blocks
+    for(uint32_t i = 0; i < t->maxAttribute; i++)
+    {
+        size_t col_size = t->maxRecord * t->AttributeSizes[i];
+
+        if(col_size > 0)
+        {
+            // Allocate memory for this column's data block
+            t->data[i] = malloc(col_size);
+            if (!t->data[i]) return NULL; // Out of memory
+
+            // READ from file into memory (Fixed from fwrite!)
+            fread(t->data[i], 1, col_size, f);
+        }
+        else
+        {
+            t->data[i] = NULL;
+        }
+    }
+
+    return t;
 }

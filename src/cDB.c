@@ -4,7 +4,6 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <xkeycheck.h>
 
 #include "../include/cDB_Table.h"
 #include "../include/cDB.h"
@@ -24,6 +23,16 @@ static inline size_t cDB_getDatatypeSize(cDB_Datatype type, size_t custom_size)
 		case CDB_STRING:  return custom_size > 0 ? custom_size : 64;
 		case CDB_CUSTOM:  return custom_size;
 		default:          return custom_size > 0 ? custom_size : sizeof(uint64_t);
+	}
+}
+
+static cDB_Datatype infer_attr_type(size_t size)
+{
+	switch (size) {
+		case 1:  return CDB_BOOL;
+		case 4:  return CDB_INT32;
+		case 8:  return CDB_INT64;
+		default: return (size > 0) ? CDB_STRING : CDB_CUSTOM;
 	}
 }
 
@@ -75,6 +84,7 @@ cDB_Database* cDB_Init()
 	db->qResult.inCondRecords = NULL;
 	db->qResult.nResult = 0;
 	db->isSaved = true;
+	db->typeRef = NULL;
 
 	return db;
 };
@@ -359,13 +369,33 @@ cDB_Attribute cDB_getAttribute(cDB_Database* db, const char alias[STD_CDB_STRLEN
 	return promise;
 }
 
-void cDB_setAttributeAlias(cDB_Database *db, cDB_Attribute attrib, const char alias[STD_CDB_STRLEN])
+cDB_Attribute cDB_getAttributeByIdx(cDB_Database* db, uint64_t attrib_idx)
 {
-	if(!db || !db->table || !attrib.isValid) return;
+	cDB_Attribute promise = {0};
+	promise.isValid = false;
+	promise.idx = UINT64_MAX;
 
-	cDB_Table_setAttributeAlias(db->table, attrib.idx, alias);
+	if (!db || !db->table || attrib_idx >= db->table->maxAttribute) return promise;
+
+	cDB_Table_cpyAttributeAlias(db->table, attrib_idx, promise.name);
+	promise.name[sizeof(promise.name) - 1] = '\0';
+	promise.idx = attrib_idx;
+	promise.size = db->table->AttributeSizes[attrib_idx];
+	promise.type = CDB_CUSTOM;
+	promise.isValid = true;
+
+	return promise;
+};
+
+void cDB_setAttributeAlias(cDB_Database *db, cDB_Attribute* attrib, const char alias[STD_CDB_STRLEN])
+{
+	if(!db || !db->table || !attrib->isValid) return;
+
+	cDB_Table_setAttributeAlias(db->table, attrib->idx, alias);
 	db->isSaved = false;
 }
+
+
 
 //-----------------------------------Record operations----------------------------------------
 
@@ -387,140 +417,195 @@ void cDB_setRecordAlias(cDB_Database *db, cDB_Record record, const char alias[ST
 //-----------------------------------Value access----------------------------------------
 
 // set
-void cDB_set_t(cDB_Database* db, cDB_Record record, cDB_Attribute attrib, void* data)
+void cDB_set_t(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib, void* data)
 {
-	if (!db || !db->table || !attrib.isValid || !data) return;
+	if (!db || !db->table || !attrib->isValid || !data) return;
 
-	cDB_Table_set(db->table, record, attrib.idx, data);
+	cDB_Table_set(db->table, record, attrib->idx, data);
 	db->isSaved = false;
 }
 
 // Typed set
-void cDB_set_BOOL(cDB_Database* db, cDB_Record record, cDB_Attribute attrib,  bool data)
+void cDB_set_BOOL(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib,  bool data)
 {
-	if(attrib.type != CDB_BOOL) return;
+	if(attrib->type != CDB_BOOL) return;
 	cDB_set_t(db, record, attrib, &data );
 }
 
-void cDB_set_I32(cDB_Database* db, cDB_Record record, cDB_Attribute attrib, int32_t data)
+void cDB_set_I32(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib, int32_t data)
 {
-	if(attrib.type != CDB_INT32) return;
+	if(attrib->type != CDB_INT32) return;
 	cDB_set_t(db, record, attrib, &data );
 }
 
-void cDB_set_I64(cDB_Database* db, cDB_Record record, cDB_Attribute attrib, int64_t data)
+void cDB_set_I64(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib, int64_t data)
 {
-	if(attrib.type != CDB_INT64) return;
+	if(attrib->type != CDB_INT64) return;
 	cDB_set_t(db, record, attrib, &data );
 }
 
-void cDB_set_UI32(cDB_Database* db, cDB_Record record, cDB_Attribute attrib, uint32_t data)
+void cDB_set_UI32(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib, uint32_t data)
 {
-	if(attrib.type != CDB_UINT32) return;
+	if(attrib->type != CDB_UINT32) return;
 	cDB_set_t(db, record, attrib, &data );
 }
 
-void cDB_set_UI64(cDB_Database* db, cDB_Record record, cDB_Attribute attrib, uint64_t data)
+void cDB_set_UI64(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib, uint64_t data)
 {
-	if(attrib.type != CDB_UINT64) return;
+	if(attrib->type != CDB_UINT64) return;
 	cDB_set_t(db, record, attrib, &data );
 }
 
-void cDB_set_F32(cDB_Database* db, cDB_Record record, cDB_Attribute attrib, float data)
+void cDB_set_F32(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib, float data)
 {
-	if(attrib.type != CDB_FLOAT32) return;
+	if(attrib->type != CDB_FLOAT32) return;
 	cDB_set_t(db, record, attrib, &data );
 }
 
-void cDB_set_F64(cDB_Database* db, cDB_Record record, cDB_Attribute attrib, double data)
+void cDB_set_F64(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib, double data)
 {
-	if(attrib.type != CDB_FLOAT64) return;
+	if(attrib->type != CDB_FLOAT64) return;
 	cDB_set_t(db, record, attrib, &data );
 }
 
-void cDB_set_STR(cDB_Database* db, cDB_Record record, cDB_Attribute attrib, const char* data)
+void cDB_set_STR(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib, const char* data)
 {
-	if(!db || !db->table || !attrib.isValid || !data) return;
-	if(record >= db->table->maxRecord || attrib.idx >= db->table->maxAttribute) return;
-	if(attrib.type != CDB_STRING) return;
+	if(!db || !db->table || !attrib->isValid || !data) return;
+	if(record >= db->table->maxRecord || attrib->idx >= db->table->maxAttribute) return;
+	if(attrib->type != CDB_STRING) return;
 
-	size_t max_size = db->table->AttributeSizes[attrib.idx];
+	size_t max_size = db->table->AttributeSizes[attrib->idx];
 	if(max_size == 0) return;
 
-	if(db->table->data[attrib.idx] == NULL)
+	if(db->table->data[attrib->idx] == NULL)
 	{
-		db->table->data[attrib.idx] = calloc(db->table->maxRecord, max_size);
-		if(!db->table->data[attrib.idx]) return;
+		db->table->data[attrib->idx] = calloc(db->table->maxRecord, max_size);
+		if(!db->table->data[attrib->idx]) return;
 	}
 
-	char* dest = (char*)db->table->data[attrib.idx] + (record * max_size);
+	char* dest = (char*)db->table->data[attrib->idx] + (record * max_size);
 	strncpy(dest, data, max_size - 1);
 	dest[max_size - 1] = '\0';
 	db->isSaved = false;
 }
 
 // get
-void* cDB_get_t(cDB_Database* db, cDB_Record record, cDB_Attribute attrib)
+void* cDB_get_t(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib)
 {
-	if (!db || !db->table || !attrib.isValid) return NULL;
+	if (!db || !db->table || !attrib->isValid) return NULL;
 
-	return cDB_Table_get(db->table, record, attrib.idx);
+	return cDB_Table_get(db->table, record, attrib->idx);
 }
 
 // Typed get
-bool cDB_get_BOOL(cDB_Database* db, cDB_Record record, cDB_Attribute attrib)
+bool cDB_get_BOOL(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib)
 {
-	if (attrib.type != CDB_BOOL) return 0;
+	if (attrib->type != CDB_BOOL) return 0;
 	void* ptr = cDB_get_t(db, record, attrib);
 	return ptr ? *(bool*)ptr : 0;
 }
 
-int32_t cDB_get_I32(cDB_Database* db, cDB_Record record, cDB_Attribute attrib)
+int32_t cDB_get_I32(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib)
 {
-	if (attrib.type != CDB_INT32) return 0;
+	if (attrib->type != CDB_INT32) return 0;
 	void* ptr = cDB_get_t(db, record, attrib);
 	return ptr ? *(int32_t*)ptr : 0;
 }
 
-int64_t cDB_get_I64(cDB_Database* db, cDB_Record record, cDB_Attribute attrib)
+int64_t cDB_get_I64(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib)
 {
-	if (attrib.type != CDB_INT64) return 0;
+	if (attrib->type != CDB_INT64) return 0;
 	void* ptr = cDB_get_t(db, record, attrib);
 	return ptr ? *(int64_t*)ptr : 0;
 }
 
-uint32_t cDB_get_UI32(cDB_Database* db, cDB_Record record, cDB_Attribute attrib)
+uint32_t cDB_get_UI32(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib)
 {
-	if (attrib.type != CDB_UINT32) return 0;
+	if (attrib->type != CDB_UINT32) return 0;
 	void* ptr = cDB_get_t(db, record, attrib);
 	return ptr ? *(uint32_t*)ptr : 0;
 }
 
-uint64_t cDB_get_UI64(cDB_Database* db, cDB_Record record, cDB_Attribute attrib)
+uint64_t cDB_get_UI64(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib)
 {
-	if (attrib.type != CDB_UINT64) return 0;
+	if (attrib->type != CDB_UINT64) return 0;
 	void* ptr = cDB_get_t(db, record, attrib);
 	return ptr ? *(uint64_t*)ptr : 0;
 }
 
-float cDB_get_F32(cDB_Database* db, cDB_Record record, cDB_Attribute attrib)
+float cDB_get_F32(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib)
 {
-	if (attrib.type != CDB_FLOAT32) return 0.0f;
+	if (attrib->type != CDB_FLOAT32) return 0.0f;
 	void* ptr = cDB_get_t(db, record, attrib);
 	return ptr ? *(float*)ptr : 0.0f;
 }
 
-double cDB_get_F64(cDB_Database* db, cDB_Record record, cDB_Attribute attrib)
+double cDB_get_F64(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib)
 {
-	if (attrib.type != CDB_FLOAT64) return 0.0;
+	if (attrib->type != CDB_FLOAT64) return 0.0;
 	void* ptr = cDB_get_t(db, record, attrib);
 	return ptr ? *(double*)ptr : 0.0;
 }
 
-char* cDB_get_STR(cDB_Database* db, cDB_Record record, cDB_Attribute attrib)
+char* cDB_get_STR(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib)
 {
-	if (attrib.type != CDB_STRING) return NULL;
+	if (attrib->type != CDB_STRING) return NULL;
 	return (char*)cDB_get_t(db, record, attrib);
+}
+
+uint64_t cDB_fvalue(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib, char* buffer)
+{
+	if (!db || !db->table || !attrib || !attrib->isValid || !buffer) return 0;
+
+	void* ptr = cDB_get_t(db, record, attrib);
+	if (!ptr) {
+		int written = sprintf(buffer, "NULL");
+		return written > 0 ? (uint64_t)written : 0;
+	}
+
+	int written = 0;
+	switch (attrib->type) {
+		case CDB_BOOL:
+			written = sprintf(buffer, *(bool*)ptr ? "true" : "false");
+			break;
+		case CDB_INT32:
+			written = sprintf(buffer, "%d", *(int32_t*)ptr);
+			break;
+		case CDB_INT64:
+			written = sprintf(buffer, "%lld", (long long)*(int64_t*)ptr);
+			break;
+		case CDB_UINT32:
+			written = sprintf(buffer, "%u", *(uint32_t*)ptr);
+			break;
+		case CDB_UINT64:
+			written = sprintf(buffer, "%llu", (unsigned long long)*(uint64_t*)ptr);
+			break;
+		case CDB_FLOAT32:
+			written = sprintf(buffer, "%.3f", *(float*)ptr);
+			break;
+		case CDB_FLOAT64:
+			written = sprintf(buffer, "%.6f", *(double*)ptr);
+			break;
+		case CDB_STRING:
+			written = sprintf(buffer, "%s", (char*)ptr);
+			break;
+		case CDB_CUSTOM:
+		default: {
+			// Format as hex representation or generic byte indicator
+			size_t sz = attrib->size;
+			if (sz == 0) sz = sizeof(uint64_t);
+			if (sz > 8) sz = 8; // preview first 8 bytes
+			int offset = 0;
+			unsigned char* bytes = (unsigned char*)ptr;
+			for (size_t i = 0; i < sz; i++) {
+				offset += sprintf(buffer + offset, "%02X", bytes[i]);
+			}
+			written = offset;
+			break;
+		}
+	}
+
+	return written > 0 ? (uint64_t)written : 0;
 }
 
 //-----------------------------------select----------------------------------------
@@ -763,18 +848,15 @@ static void print_horizontal_border
 	putchar('\n');
 }
 
-// NEED FIX TOO COMPLEX!
-// Build Matrix first each cells is a formatted data include Headers
-// Compute each column width
-// Print by walk the rows
+#define CDB_PRINT_MAX_COL_WIDTH 40
+
 void cDB_printProjection
 (
 	const cDB_Database* db, 
 	const cDB_Projection* proj, 
 	bool hSeperator, 
 	bool vSeperator, 
-	cDB_PrintStyle* printStyle, 
-	uint8_t* hPadding, uint8_t* vPadding
+	cDB_PrintStyle* printStyle
 )
 {
 	if (!db || !db->table || !proj) return;
@@ -784,14 +866,11 @@ void cDB_printProjection
 		style = *printStyle;
 	}
 
-	uint8_t pad_h = hPadding ? *hPadding : 1;
-	uint8_t pad_v = vPadding ? *vPadding : 0;
-
 	uint64_t totalCols = 1 + proj->nAttributes;
 	uint32_t* col_widths = (uint32_t*)malloc(totalCols * sizeof(uint32_t));
 	if (!col_widths) return;
 
-	// Initial widths from headers
+	// Pass 1: Initialize column widths with header lengths
 	col_widths[0] = (uint32_t)strlen("RECORD");
 	for (uint64_t j = 0; j < proj->nAttributes; j++) {
 		uint64_t attr_idx = proj->projAttributes[j];
@@ -799,7 +878,8 @@ void cDB_printProjection
 		col_widths[1 + j] = (uint32_t)strlen(attr_name);
 	}
 
-	// Calculate widths from records
+	// Pass 1: Find longest formatted value per column
+	char buf[256];
 	for (uint64_t i = 0; i < proj->nRecords; i++) {
 		cDB_Record r = proj->projRecords[i];
 		const char* rec_alias = (r < db->table->maxRecord) ? db->table->RecordAlias[r] : "";
@@ -814,31 +894,51 @@ void cDB_printProjection
 
 		for (uint64_t j = 0; j < proj->nAttributes; j++) {
 			uint64_t attr_idx = proj->projAttributes[j];
-			void* val = cDB_Table_get(db->table, r, attr_idx);
-			uint32_t v_len = val ? (uint32_t)strlen((char*)val) : 4; // "NULL"
-			if (v_len > col_widths[1 + j]) col_widths[1 + j] = v_len;
+			if (attr_idx >= db->table->maxAttribute) continue;
+
+			cDB_Attribute attr = {0};
+			attr.idx = attr_idx;
+			attr.size = db->table->AttributeSizes[attr_idx];
+			attr.type = infer_attr_type(attr.size);
+			strncpy(attr.name, db->table->AttributeAlias[attr_idx], STD_CDB_STRLEN - 1);
+			attr.isValid = true;
+
+			//cDB_Attribute attr = cDB_getAttribute(db, const char *alias)
+
+			uint64_t len = cDB_fvalue((cDB_Database*)db, r, &attr, buf);
+			if (len > col_widths[1 + j]) {
+				col_widths[1 + j] = (uint32_t)len;
+			}
+		}
+	}
+
+	// Apply hybrid upper cap
+	for (uint64_t c = 0; c < totalCols; c++) {
+		if (col_widths[c] > CDB_PRINT_MAX_COL_WIDTH) {
+			col_widths[c] = CDB_PRINT_MAX_COL_WIDTH;
 		}
 	}
 
 	char v_char = vSeperator ? style.VerticalLine : ' ';
 	char mid_h = vSeperator ? '+' : style.HorizontalLine;
+	uint8_t pad_h = 1;
 
 	// Top border
 	print_horizontal_border(style.UpperLeft_Corner, style.HorizontalLine, mid_h, style.UpperRight_Corner, col_widths, totalCols, pad_h);
 
 	// Column header
 	putchar(v_char);
-	for (uint8_t p = 0; p < pad_h; p++) putchar(' ');
-	printf("%-*s", (int)col_widths[0], "RECORD");
-	for (uint8_t p = 0; p < pad_h; p++) putchar(' ');
+	putchar(' ');
+	printf("%-*.*s", (int)col_widths[0], (int)col_widths[0], "RECORD");
+	putchar(' ');
 
 	for (uint64_t j = 0; j < proj->nAttributes; j++) {
 		putchar(v_char);
 		uint64_t attr_idx = proj->projAttributes[j];
 		const char* attr_name = (attr_idx < db->table->maxAttribute) ? db->table->AttributeAlias[attr_idx] : "UNKNOWN";
-		for (uint8_t p = 0; p < pad_h; p++) putchar(' ');
-		printf("%-*s", (int)col_widths[1 + j], attr_name);
-		for (uint8_t p = 0; p < pad_h; p++) putchar(' ');
+		putchar(' ');
+		printf("%-*.*s", (int)col_widths[1 + j], (int)col_widths[1 + j], attr_name);
+		putchar(' ');
 	}
 	putchar(v_char);
 	putchar('\n');
@@ -846,19 +946,8 @@ void cDB_printProjection
 	// Header bottom border
 	print_horizontal_border('+', style.HorizontalLine, mid_h, '+', col_widths, totalCols, pad_h);
 
-	// Rows
+	// Pass 2: Print rows
 	for (uint64_t i = 0; i < proj->nRecords; i++) {
-		// Vertical top padding
-		for (uint8_t vp = 0; vp < pad_v; vp++) {
-			putchar(v_char);
-			for (uint64_t c = 0; c < totalCols; c++) {
-				for (uint32_t s = 0; s < col_widths[c] + (pad_h * 2); s++) putchar(' ');
-				if (c + 1 < totalCols) putchar(v_char);
-			}
-			putchar(v_char);
-			putchar('\n');
-		}
-
 		cDB_Record r = proj->projRecords[i];
 		const char* rec_alias = (r < db->table->maxRecord) ? db->table->RecordAlias[r] : "";
 		char rec_label[STD_CDB_STRLEN];
@@ -869,35 +958,31 @@ void cDB_printProjection
 		}
 
 		putchar(v_char);
-		for (uint8_t p = 0; p < pad_h; p++) putchar(' ');
-		printf("%-*s", (int)col_widths[0], rec_label);
-		for (uint8_t p = 0; p < pad_h; p++) putchar(' ');
+		putchar(' ');
+		printf("%-*.*s", (int)col_widths[0], (int)col_widths[0], rec_label);
+		putchar(' ');
 
 		for (uint64_t j = 0; j < proj->nAttributes; j++) {
 			putchar(v_char);
 			uint64_t attr_idx = proj->projAttributes[j];
-			void* val = cDB_Table_get(db->table, r, attr_idx);
-			for (uint8_t p = 0; p < pad_h; p++) putchar(' ');
-			if (!val) {
-				printf("%-*s", (int)col_widths[1 + j], "NULL");
-			} else {
-				printf("%-*s", (int)col_widths[1 + j], (char*)val);
+
+			cDB_Attribute attr = {0};
+			if (attr_idx < db->table->maxAttribute) {
+				attr.idx = attr_idx;
+				attr.size = db->table->AttributeSizes[attr_idx];
+				attr.type = infer_attr_type(attr.size);
+				attr.isValid = true;
+				strncpy(attr.name, db->table->AttributeAlias[attr_idx], STD_CDB_STRLEN - 1);
 			}
-			for (uint8_t p = 0; p < pad_h; p++) putchar(' ');
+
+			cDB_fvalue((cDB_Database*)db, r, &attr, buf);
+
+			putchar(' ');
+			printf("%-*.*s", (int)col_widths[1 + j], (int)col_widths[1 + j], buf);
+			putchar(' ');
 		}
 		putchar(v_char);
 		putchar('\n');
-
-		// Vertical bottom padding
-		for (uint8_t vp = 0; vp < pad_v; vp++) {
-			putchar(v_char);
-			for (uint64_t c = 0; c < totalCols; c++) {
-				for (uint32_t s = 0; s < col_widths[c] + (pad_h * 2); s++) putchar(' ');
-				if (c + 1 < totalCols) putchar(v_char);
-			}
-			putchar(v_char);
-			putchar('\n');
-		}
 
 		// Optional row separator
 		if (hSeperator && (i + 1 < proj->nRecords)) {

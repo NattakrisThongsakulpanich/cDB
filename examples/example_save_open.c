@@ -24,27 +24,27 @@ int main(void)
 
     // 3. Define attributes
     cDB_Attribute item_attr  = cDB_createAttribute(db, "ItemName", CDB_STRING, 32);
-    cDB_Attribute stock_attr = cDB_createAttribute(db, "Stock",    CDB_STRING, 16);
-    cDB_Attribute price_attr = cDB_createAttribute(db, "Price",    CDB_STRING, 16);
+    cDB_Attribute stock_attr = cDB_createAttribute(db, "Stock",    CDB_UINT32, NULL);
+    cDB_Attribute price_attr = cDB_createAttribute(db, "Price",    CDB_FLOAT32, NULL);
 
     // 4. Populate rows with records and values
     // Row 0
     cDB_setRecordAlias(db, 0, "INV_001");
-    cDB_set_STR(db, 0, item_attr, "Mechanical Keyboard");
-    cDB_set_STR(db, 0, stock_attr, "45");
-    cDB_set_STR(db, 0, price_attr, "99.99");
+    cDB_set_STR(db, 0, &item_attr, "Mechanical Keyboard");
+    cDB_set_UI32(db, 0, &stock_attr, 45);
+    cDB_set_F32(db, 0, &price_attr, 99.99);
 
     // Row 1
     cDB_setRecordAlias(db, 1, "INV_002");
-    cDB_set_STR(db, 1, item_attr, "Wireless Mouse");
-    cDB_set_STR(db, 1, stock_attr, "120");
-    cDB_set_STR(db, 1, price_attr, "49.50");
+    cDB_set_STR(db, 1, &item_attr, "Wireless Mouse");
+    cDB_set_UI32(db, 1, &stock_attr, 120);
+    cDB_set_F32(db, 1, &price_attr, 49.50);
 
     // Row 2
     cDB_setRecordAlias(db, 2, "INV_003");
-    cDB_set_STR(db, 2, item_attr, "4K Monitor");
-    cDB_set_STR(db, 2, stock_attr, "18");
-    cDB_set_STR(db, 2, price_attr, "349.00");
+    cDB_set_STR(db, 2, &item_attr, "4K Monitor");
+    cDB_set_UI32(db, 2, &stock_attr, 18);
+    cDB_set_F32(db, 2, &price_attr, 349.00);
 
     printf("[2] Added 3 inventory records into active session.\n");
 
@@ -73,7 +73,7 @@ int main(void)
     cDB_Projection* proj = cDB_getTProjection(db2);
     if (proj) {
         printf("Loaded Table View:\n");
-        cDB_printProjection(db2, proj, false, true, NULL, NULL, NULL);
+        cDB_printProjection(db2, proj, false, true, NULL);
         cDB_freeProjection(proj);
     }
 

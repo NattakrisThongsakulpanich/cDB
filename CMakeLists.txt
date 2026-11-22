@@ -12,3 +12,10 @@ add_library(cDB STATIC
 target_include_directories(cDB PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
+
+add_executable(cdb_tui src/all_cDB_TUI.c)
+set_target_properties(cdb_tui PROPERTIES OUTPUT_NAME "cdb")
+target_link_libraries(cdb_tui PRIVATE cDB)
+
+add_executable(example_save_open examples/example_save_open.c)
+target_link_libraries(example_save_open PRIVATE cDB)

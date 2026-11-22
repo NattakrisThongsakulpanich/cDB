@@ -34,9 +34,13 @@ void* cDB_Table_getAttribProjection(cDB_Table* t, uint64_t AttributeIdx);
 // Sets
 void cDB_Table_setRecordAlias(cDB_Table* t, uint64_t RecordIdx, const char* alias);
 void cDB_Table_setAttributeAlias(cDB_Table* t, uint64_t AttributeIdx, const char* alias);
+void cDB_Table_cpyRecordAlias(cDB_Table* t, uint64_t RecordIdx, char* buffer);
+void cDB_Table_cpyAttributeAlias(cDB_Table* t, uint64_t AttributeIdx, char* buffer);
+
 void cDB_Table_setAttributeSize(cDB_Table* t, uint64_t AttributeIdx, size_t size);
 void cDB_Table_set(cDB_Table* t, uint64_t RecordIdx, uint64_t AttributeIdx, void* data);
 
 // IO
 bool cDB_Table_fwrite(cDB_Table* t, FILE* f);
 bool cDB_Table_fread(cDB_Table* t, FILE* f);
+cDB_Table* cDB_Table_fromf(FILE* f);
