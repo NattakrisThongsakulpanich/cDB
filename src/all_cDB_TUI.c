@@ -5,49 +5,49 @@
 
 int viewMode(const char* filename)
 {
-	cDB_Database* db = cDB_Init();
+	cDB_Database* db = cdb_Create();
 	if (!db) {
 		fprintf(stderr, "Error: Failed to initialize database.\n");
 		return 1;
 	}
 
-	if (!cDB_Open(db, filename)) {
+	if (!cdb_open(db, filename)) {
 		fprintf(stderr, "Error: Could not open or invalid .cdb file: %s\n", filename);
-		cDB_Close(db);
+		cdb_Destroy(db);
 		return 1;
 	}
 
-	cDB_Projection* proj = cDB_getTProjection(db);
+	cDB_Projection* proj = cdb_CreateTableProjection(db);
 	if (!proj) {
 		printf("Table is empty or has no active records/attributes.\n");
 	} else {
-		cDB_printProjection(db, proj, false, true, NULL);
-		cDB_freeProjection(proj);
+		cdb_printProjection(db, proj, false, true, NULL);
+		cdb_freeProjection(proj);
 	}
 
-	cDB_Close(db);
+	cdb_Destroy(db);
 	return 0;
 }
 
 
 int exportCSVMode(const char* filename, const char* output_csv)
 {
-	cDB_Database* db = cDB_Init();
+	cDB_Database* db = cdb_Create();
 	if (!db) {
 		fprintf(stderr, "Error: Failed to initialize database.\n");
 		return 1;
 	}
 
-	if (!cDB_Open(db, filename)) {
+	if (!cdb_open(db, filename)) {
 		fprintf(stderr, "Error: Could not open or invalid .cdb file: %s\n", filename);
-		cDB_Close(db);
+		cdb_Destroy(db);
 		return 1;
 	}
 
-	cDB_Projection* proj = cDB_getTProjection(db);
+	cDB_Projection* proj = cdb_CreateTableProjection(db);
 	if (!proj) {
 		fprintf(stderr, "Error: Table is empty or has no active records/attributes.\n");
-		cDB_Close(db);
+		cdb_Destroy(db);
 		return 1;
 	}
 
@@ -58,16 +58,16 @@ int exportCSVMode(const char* filename, const char* output_csv)
 		out_filename = csv_name_buf;
 	}
 
-	if (!cDB_Proj2CSV(db, proj, out_filename)) {
+	if (!cdb_exportCSV(db, proj, out_filename)) {
 		fprintf(stderr, "Error: Failed to export CSV to %s\n", out_filename);
-		cDB_freeProjection(proj);
-		cDB_Close(db);
+		cdb_freeProjection(proj);
+		cdb_Destroy(db);
 		return 1;
 	}
 
 	printf("Successfully exported table to %s\n", out_filename);
-	cDB_freeProjection(proj);
-	cDB_Close(db);
+	cdb_freeProjection(proj);
+	cdb_Destroy(db);
 	return 0;
 }
 

@@ -27,6 +27,8 @@ Makefile
 *.cdb
 
 # IDE & Editor files
+.vs/
+.out/
 .vscode/
 .idea/
 *.swp

@@ -11,7 +11,7 @@
 #include "./cDB_Table.h"
 
 extern const char MAGIC_BYTE[12]; /* use to verify a .cdb file*/
-#define STD_CDB_STRLEN 65 /* 64+1 reserve for '\0' */
+#define CDB_STD_STRLEN 65 /* 64+1 reserve for '\0' */
 #define CDB_OUT_OF_RANGE uint64_t
 #define cDB_Record uint64_t
 #define CDB_PRINT_MAX_COL_WIDTH 40
@@ -47,7 +47,7 @@ typedef struct
 
 typedef struct
 {
-	char name[STD_CDB_STRLEN];
+	char name[CDB_STD_STRLEN];
 	uint64_t idx;
 	size_t size;
 	cDB_Datatype type;
@@ -79,69 +79,69 @@ typedef struct
 typedef bool (*cDB_Predicate)(cDB_Database* db, cDB_Record record, void* user_data);
 
 // Database lifecycle
-cDB_Database* cDB_Init(void);
-void cDB_Close(cDB_Database* db);
+cDB_Database* cdb_Create(void);
+void cdb_Destroy(cDB_Database* db);
 
 // File/IO
-bool cDB_Save(cDB_Database* db, const char filename[65]);
-bool cDB_Open(cDB_Database* db, const char filename[65]);
-bool cDB_Proj2CSV(cDB_Database* db, const cDB_Projection* proj, const char filename[65]);
+bool cdb_save(cDB_Database* db, const char filename[65]);
+bool cdb_open(cDB_Database* db, const char filename[65]);
+bool cdb_exportCSV(cDB_Database* db, const cDB_Projection* proj, const char filename[65]);
 
 // Table manipulation
-bool cDB_newTable(cDB_Database* db, const char name[STD_CDB_STRLEN], const uint32_t maxRecord, const uint32_t maxAttribute);
+bool cdb_CreateTable(cDB_Database* db, const char name[CDB_STD_STRLEN], const uint32_t recordCapacity, const uint32_t attributeCapacity);
 
 // Attribute operations
-cDB_Attribute cDB_createAttribute(cDB_Database* db, const char alias[STD_CDB_STRLEN], cDB_Datatype type, size_t custom_size);
-cDB_Attribute cDB_getAttribute(cDB_Database* db, const char alias[STD_CDB_STRLEN]);
-cDB_Attribute cDB_getAttributeByIdx(cDB_Database* db, uint64_t attrib_idx);
-void cDB_setAttributeAlias(cDB_Database *db, cDB_Attribute* attrib, const char alias[STD_CDB_STRLEN]);
+cDB_Attribute cdb_CreateAttribute(cDB_Database* db, const char alias[CDB_STD_STRLEN], cDB_Datatype type, size_t custom_size);
+cDB_Attribute cdb_getAttribute(cDB_Database* db, const char alias[CDB_STD_STRLEN]);
+cDB_Attribute cdb_getAttribute_byIndex(cDB_Database* db, uint64_t attrib_idx);
+void cdb_setAttributeName(cDB_Database *db, cDB_Attribute* attrib, const char alias[CDB_STD_STRLEN]);
 
 // Record operations
-cDB_Record cDB_getRecord(cDB_Database* db, const char alias[STD_CDB_STRLEN]);
-void cDB_setRecordAlias(cDB_Database *db, cDB_Record record, const char alias[STD_CDB_STRLEN]);
+cDB_Record cdb_get_record(cDB_Database* db, const char alias[CDB_STD_STRLEN]);
+void cdb_set_recordName(cDB_Database *db, cDB_Record record, const char alias[CDB_STD_STRLEN]);
 
 //-----------------------------------Value access----------------------------------------
 // set
-void cDB_set_t(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib, const void* data);
+void cdb_set_t(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib, const void* data);
 // Typed set
-void cDB_set_BOOL(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib, const bool data);
-void cDB_set_I32(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib, const int32_t data);
-void cDB_set_I64(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib, const int64_t data);
-void cDB_set_UI32(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib, const uint32_t data);
-void cDB_set_UI64(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib, const uint64_t data);
-void cDB_set_F32(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib, const float data);
-void cDB_set_F64(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib, const double data);
-void cDB_set_STR(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib, const char* data); // This copy string until '\0' is found
+void cdb_set_bool(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib, const bool data);
+void cdb_set_i32(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib, const int32_t data);
+void cdb_set_i64(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib, const int64_t data);
+void cdb_set_u32(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib, const uint32_t data);
+void cdb_set_u64(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib, const uint64_t data);
+void cdb_set_f32(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib, const float data);
+void cdb_set_f64(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib, const double data);
+void cdb_set_string(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib, const char* data); // This copy string until '\0' is found
 // get
-void* cDB_get_t(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib);
+void* cdb_get_t(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib);
 // Typed get
-bool 		cDB_get_BOOL(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib);
-int32_t 	cDB_get_I32(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib);
-int64_t 	cDB_get_I64(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib);
-uint32_t 	cDB_get_UI32(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib);
-uint64_t 	cDB_get_UI64(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib);
-float 		cDB_get_F32(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib);
-double 		cDB_get_F64(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib);
-char* 		cDB_get_STR(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib);
+bool 		cdb_get_bool(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib);
+int32_t 	cdb_get_i32(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib);
+int64_t 	cdb_get_i64(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib);
+uint32_t 	cdb_get_u32(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib);
+uint64_t 	cdb_get_u64(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib);
+float 		cdb_get_f32(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib);
+double 		cdb_get_f64(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib);
+char* 		cdb_get_string(cDB_Database* db, cDB_Record record, cDB_Attribute* attrib);
 
-uint64_t cDB_fvalue(cDB_Database* db, cDB_Record record, cDB_Attribute* aattrib, char* buffer); // this returns number of written character
+uint64_t cdb_format_value(cDB_Database* db, cDB_Record record, cDB_Attribute* aattrib, char* buffer); // this returns number of written character
 
 //-----------------------------------select----------------------------------------
 
 // Selection & Results
-void 		cDB_clearResult(cDB_Database* db);
-bool 		cDB_select(cDB_Database* db, cDB_Predicate predicate, void* user_data);
-bool 		cDB_cpyResult(const cDB_Database* db, cDB_Result* dst); //cDB_resultGetRecord -> cDB_cpyResult()
-const cDB_Result* cDB_getResult(const cDB_Database* db);
+void 		cdb_clearResult(cDB_Database* db);
+bool 		cdb_select(cDB_Database* db, cDB_Predicate predicate, void* user_data);
+bool 		cdb_copyResult(const cDB_Database* db, cDB_Result* dst); //cDB_resultGetRecord -> cdb_copyResult()
+const cDB_Result* cdb_getResult(const cDB_Database* db);
 
 //----------------------------------projections------------------------------------
 
 // Projections & Printing
-cDB_Projection* cDB_getProjection(cDB_Database* db, cDB_Record* records, uint64_t nRecords, const uint64_t* attrib_indices, uint64_t nAttributes);
-cDB_Projection* cDB_getRProjection(cDB_Database* db); // get Result Projection
-cDB_Projection* cDB_getTProjection(cDB_Database* db); // get Table Projection
-void cDB_freeProjection(cDB_Projection* proj);
-void cDB_printProjection(
+cDB_Projection* cdb_CreateProjection(cDB_Database* db, cDB_Record* records, uint64_t nRecords, const uint64_t* attrib_indices, uint64_t nAttributes);
+cDB_Projection* cdb_CreateResultProjection(cDB_Database* db); // get Result Projection
+cDB_Projection* cdb_CreateTableProjection(cDB_Database* db); // get Table Projection
+void cdb_freeProjection(cDB_Projection* proj);
+void cdb_printProjection(
 	cDB_Database* db, 
 	cDB_Projection* proj, 
 	bool hSeperator, 

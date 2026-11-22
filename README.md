@@ -1,411 +1,257 @@
-# cDB Library Documentation
+# cDB
 
-`cDB` is a lightweight, columnar (attribute-major) database library written in C. It provides structured schema definitions, strongly-typed attributes, record management, explicit binary serialization (`.cdb`), flexible functional querying via custom predicates, and simple projection/custom formatting tools.
+`cDB` is a small, embedded, column-oriented database library written in C99. It is a learning and technology-demonstration project inspired by a few SQLite-like ideas: an application owns a database object, defines a schema, writes records, queries them, and optionally saves them to a file.
 
-This project is developed as part of the KMUTT Department of Computer Engineering, Computer Programming 101.
+It is deliberately narrow in scope. A `cDB_Database` owns **one table at a time**. cDB is not an SQL engine and does not implement joins, transactions, indexes, concurrency, or multi-table relationships.
 
-NOTICE: Due to a tight project deadline. This project is AI assisted approximately to 25% of the Entire code base. Yet strict prompting, a issues could be possible. please inform us in case of issues or broken logics founded. Thank you!
+This project is developed as a final project of the KMUTT Department of Computer Engineering, Computer Programming 101 (2026).  
 
----
+NOTICE: Due to a tight project deadline and project scale. This project is AI assisted approximately to 40% of the Entire code base. Yet strict prompting, a issues could be possible. please inform us in case of issues or broken logics founded. Thank you!
 
-## Table of Contents
+## Features
 
-1. [Architecture & Storage Model](https://www.google.com/search?q=%23architecture--storage-model)
-2. [Project Structure](https://www.google.com/search?q=%23project-structure)
-3. [Building the Library](https://www.google.com/search?q=%23building-the-library)
-4. [Quickstart Guide](https://www.google.com/search?q=%23quickstart-guide)
-5. [API Reference](https://www.google.com/search?q=%23api-reference)
-* [Types & Enums](https://www.google.com/search?q=%23types--enums)
-* [Database Lifecycle & Persistence](https://www.google.com/search?q=%23database-lifecycle--persistence)
-* [Table & Attribute DDL](https://www.google.com/search?q=%23table--attribute-ddl)
-* [Record Operations](https://www.google.com/search?q=%23record-operations)
-* [Selection & Results](https://www.google.com/search?q=%23selection--results)
-* [Projections & Custom Printing](https://www.google.com/search?q=%23projections--custom-printing)
+- Column-oriented in-memory storage: each attribute owns one contiguous value block.
+- Fixed capacities selected when the table is created.
+- Typed attributes: booleans, integers, floating-point values, strings, and custom binary values.
+- Record and attribute names for readable lookup and display.
+- Predicate-based selection through a regular C callback.
+- Projections for table views, query results, or selected records/attributes.
+- Console-table printing and RFC 4180 CSV export.
+- Simple binary `.cdb` persistence and a command-line viewer/exporter.
 
-
-6. [Comprehensive Examples](https://www.google.com/search?q=%23comprehensive-examples)
-
----
-
-## Architecture & Storage Model
-
-Unlike traditional row-oriented relational databases, `cDB` organizes data contiguously by **Attribute** (Column) in memory to maximize data locality and cache efficiency for analytical queries.
-
-### Terminology:
-
-* **Attribute**: A column field featuring a unique name/alias, internal index, data size, type (`cDB_Datatype`), and validation state.
-* **Record**: A database entry represented by a `uint64_t` handle (`cDB_Record`), mapping values across all table attributes.
-* **Predicate**: A user-defined callback function (`cDB_Predicate`) used to filter records dynamically during selection operations.
-* **Projection**: A subset view containing specified records and attributes for targeted analysis or custom rendering.
-
----
-
-## Project Structure
+## Project layout
 
 ```text
 cDB/
-├── CMakeLists.txt     # CMake build configuration
-└── src/
-    ├── cDB.h               # Public cDB high-level API & definitions
-    ├── cDB.c               # Database engine, queries, and operations
-    ├── cDB_Table.h         # Low-level columnar table API
-    ├── cDB_Table.c         # Columnar memory layout & storage handlers
-    ├── cDB_SpreadSheet.c   # Interactive TUI .cdb editor
-
+├── include/
+│   ├── cDB.h             # Public database API
+│   └── cDB_Table.h       # Low-level column-storage API
+├── src/
+│   ├── cDB.c             # Database, queries, persistence, projections
+│   ├── cDB_Table.c       # Column-oriented table storage
+│   └── all_cDB_TUI.c     # cdb command-line utility
+├── examples/
+│   └── example1.c        # Create, save, reopen, and print a table
+└── CMakeLists.txt
 ```
 
----
+## Build
 
-## Building the Library
+Requirements: CMake 3.10+ and a C99 compiler (MSVC, Clang, or GCC).
 
-### Prerequisites
-
-* C Compiler (`clang`, `gcc`, or MSVC)
-* CMake (version 3.10+)
-
-### Compile as Static Library (`.lib` / `.a`)
-
-```bash
-mkdir build
-cd build
-cmake ..
-cmake --build .
-
+```sh
+cmake -S . -B build
+cmake --build build
 ```
 
-This produces the compiled library binaries for your operating system.
+The build produces the `cDB` static library, the `cdb` command-line utility, and `example1`.
 
----
+## Data model
 
-## Quickstart Guide
+- **Database** — owns one active table, its type metadata, and the most recent query result.
+- **Table** — fixed-capacity, column-oriented storage.
+- **Attribute** — a typed column identified by a name and an index.
+- **Record** — a `uint64_t` slot index. A record becomes active when it has a non-empty record name.
+
+`recordCapacity` and `attributeCapacity` are upper bounds, not current counts. A table is not resized after it is created.
+
+## Quick start
+
+This creates an inventory table, fills one record, prints it, and saves it as `inventory.cdb`.
 
 ```c
 #include "cDB.h"
-#include <stdio.h>
-
-// Custom filter predicate: returns true if student score >= threshold
-bool score_filter(cDB_Database* db, cDB_Record record, void* user_data) {
-    cDB_Attribute score_attr = cDB_getAttribute(db, "score");
-    double* score = (double*)cDB_getRecordValue(db, record, score_attr);
-    double threshold = *(double*)user_data;
-    return score && (*score >= threshold);
-}
-
-int main(void) {
-    // 1. Initialize database instance
-    cDB_Database* db = cDB_Init();
-
-    // 2. Create a new table with max record and attribute limits
-    cDB_newTable(db, "students", 100, 5);
-
-    // 3. Define schema attributes
-    cDB_createAttribute(db, "id", CDB_INT32, 0);
-    cDB_createAttribute(db, "name", CDB_STRING, STD_CDB_STRLEN);
-    cDB_createAttribute(db, "score", CDB_FLOAT64, 0);
-
-    // 4. Retrieve a record handle and set values
-    cDB_Record rec = cDB_getRecord(db, "student_101");
-    int32_t id = 101;
-    char name[STD_CDB_STRLEN] = "Alice";
-    double score = 88.5;
-
-    cDB_setRecordValue(db, rec, cDB_getAttribute(db, "id"), &id);
-    cDB_setRecordValue(db, rec, cDB_getAttribute(db, "name"), name);
-    cDB_setRecordValue(db, rec, cDB_getAttribute(db, "score"), &score);
-
-    // 5. Query data using a predicate
-    double min_score = 80.0;
-    cDB_select(db, score_filter, &min_score);
-
-    // 6. Project and print the result table formatted
-    cDB_Projection* proj = cDB_getTableProjection(db);
-    cDB_printProjection(db, proj, true, true, NULL, NULL, NULL);
-    cDB_freeProjection(proj);
-
-    // 7. Save to disk and close database
-    cDB_Save(db, "school.cdb");
-    cDB_Close(db);
-    return 0;
-}
-
-```
-
----
-
-## API Reference
-
-### Types & Enums
-
-#### `cDB_Datatype`
-
-Supported primitive and custom attribute types:
-
-| Type Constant | Description |
-| --- | --- |
-| `CDB_INT32` | 32-bit signed integer |
-| `CDB_INT64` | 64-bit signed integer |
-| `CDB_UINT32` | 32-bit unsigned integer |
-| `CDB_UINT64` | 64-bit unsigned integer |
-| `CDB_FLOAT32` | Single-precision floating point |
-| `CDB_FLOAT64` | Double-precision floating point |
-| `CDB_STRING` | Fixed-length string buffer |
-| `CDB_CUSTOM` | Raw binary / custom size struct |
-
-#### `cDB_SortDirection`
-
-* `CDB_SORTDIR_ASCEND`: Sort ascending
-* `CDB_SORTDIR_DESCEND`: Sort descending
-
-#### `cDB_PrintStyle`
-
-Defines custom borders and character layouts for ASCII grid printing (`UpperLeft_Corner`, `UpperRight_Corner`, `LowerLeft_Corner`, `LowerRight_Corner`, `VerticalLine`, `HorizontalLine`).
-
----
-
-### Database Lifecycle & Persistence
-
-#### `cDB_Database* cDB_Init(void)`
-
-Initializes and returns a pointer to a fresh, empty `cDB_Database` instance.
-
-#### `void cDB_Close(cDB_Database* db)`
-
-Deallocates all internal table structures, query results, and frees the database instance.
-
-#### `bool cDB_Save(cDB_Database* db, const char filename[65])`
-
-Serializes the database schema, metadata, and records into a binary file. Returns `true` on success.
-
-#### `bool cDB_Open(cDB_Database* db, const char filename[65])`
-
-Opens and loads database state from a specified `.cdb` file. Returns `true` on success.
-
----
-
-### Table & Attribute DDL
-
-#### `bool cDB_newTable(cDB_Database* db, const char name[STD_CDB_STRLEN], const uint32_t maxRecord, const uint32_t maxAttribute)`
-
-Creates a new table inside the database with defined upper limits for records and attributes.
-
-#### `cDB_Attribute cDB_createAttribute(cDB_Database* db, const char alias[STD_CDB_STRLEN], cDB_Datatype type, size_t custom_size)`
-
-Defines and creates a new attribute column on the active table schema.
-
-#### `cDB_Attribute cDB_getAttribute(cDB_Database* db, const char alias[STD_CDB_STRLEN])`
-
-Looks up and retrieves an attribute by its string alias/name.
-
-#### `void cDB_setAttributeAlias(cDB_Database *db, cDB_Attribute attrib, const char alias[STD_CDB_STRLEN])`
-
-Updates or assigns a string alias to an existing attribute.
-
----
-
-### Record Operations
-
-#### `cDB_Record cDB_getRecord(cDB_Database* db, const char alias[STD_CDB_STRLEN])`
-
-Retrieves or instantiates a record handle by its unique record alias.
-
-#### `void cDB_setRecordAlias(cDB_Database *db, cDB_Record record, const char alias[STD_CDB_STRLEN])`
-
-Assigns a string alias to a given record handle.
-
-#### `void cDB_setRecordValue(cDB_Database* db, cDB_Record record, cDB_Attribute attrib, void* data)`
-
-Writes a typed data value into a record's specific attribute cell.
-
-#### `void* cDB_getRecordValue(cDB_Database* db, cDB_Record record, cDB_Attribute attrib)`
-
-Returns a raw memory pointer to a record's value for the specified attribute.
-
----
-
-### Selection & Results
-
-#### `void cDB_clearResult(cDB_Database* db)`
-
-Clears any existing query results cached in the database.
-
-#### `bool cDB_select(cDB_Database* db, cDB_Predicate predicate, void* user_data)`
-
-Executes a query by iterating over table records and evaluating the provided `cDB_Predicate` callback function with optional `user_data`.
-
-#### `cDB_Record cDB_resultGetRecord(const cDB_Database* db, uint64_t result_idx)`
-
-Retrieves a matching record handle from the result set by index.
-
-#### `uint64_t cDB_resultLen(const cDB_Database* db)`
-
-Returns the total number of records matching the latest selection query.
-
-#### `void* cDB_resultGetValue(cDB_Database* db, uint64_t result_idx, cDB_Attribute attrib)`
-
-Extracts a value directly from a result set entry for a given attribute.
-
----
-
-### Projections & Custom Printing
-
-#### `cDB_Projection* cDB_getProjection(cDB_Database* db, cDB_Record* records, uint64_t nRecords, const uint64_t* attrib_indices, uint64_t nAttributes)`
-
-Constructs a custom projection view based on explicit record arrays and attribute index lists.
-
-#### `cDB_Projection* cDB_getResultProjection(cDB_Database* db)`
-
-Creates a projection view containing records from the current selection result set and all table attributes.
-
-#### `cDB_Projection* cDB_getTableProjection(cDB_Database* db)`
-
-Creates a full projection view encompassing all records and attributes in the active table.
-
-#### `void cDB_freeProjection(cDB_Projection* proj)`
-
-Frees allocated memory associated with a `cDB_Projection`.
-
-#### `void cDB_printProjection(const cDB_Database* db, const cDB_Projection* proj, bool hSeperator, bool vSeperator, cDB_PrintStyle* printStyle, uint8_t* hPadding, uint8_t* vPadding)`
-
-Renders and prints a projection grid formatted as an ASCII table to `stdout`.
-
----
-
-## Comprehensive Examples
-
-### 1. Creating Database, Tables, and Attributes
-
-```c
-#include "cDB.h"
-
-int main(void) {
-    cDB_Database* db = cDB_Init();
-
-    // Create "employees" table with up to 500 records and 10 attributes
-    cDB_newTable(db, "employees", 500, 10);
-
-    // Define table attributes
-    cDB_createAttribute(db, "id", CDB_INT32, 0);
-    cDB_createAttribute(db, "name", CDB_STRING, 64);
-    cDB_createAttribute(db, "department", CDB_STRING, 32);
-    cDB_createAttribute(db, "salary", CDB_FLOAT64, 0);
-    cDB_createAttribute(db, "active", CDB_INT32, 0);
-
-    cDB_Close(db);
-    return 0;
-}
-
-```
-
----
-
-### 2. Inserting and Assigning Record Values
-
-```c
-#include "cDB.h"
-
-void seed_employees(cDB_Database* db) {
-    // Record 1
-    cDB_Record r1 = cDB_getRecord(db, "emp_1");
-    int32_t id1 = 1;
-    char name1[65] = "Sarah Connor";
-    char dept1[33] = "Security";
-    double sal1 = 85000.0;
-    int32_t act1 = 1;
-
-    cDB_setRecordValue(db, r1, cDB_getAttribute(db, "id"), &id1);
-    cDB_setRecordValue(db, r1, cDB_getAttribute(db, "name"), name1);
-    cDB_setRecordValue(db, r1, cDB_getAttribute(db, "department"), dept1);
-    cDB_setRecordValue(db, r1, cDB_getAttribute(db, "salary"), &sal1);
-    cDB_setRecordValue(db, r1, cDB_getAttribute(db, "active"), &act1);
-
-    // Record 2
-    cDB_Record r2 = cDB_getRecord(db, "emp_2");
-    int32_t id2 = 2;
-    char name2[65] = "John Doe";
-    char dept2[33] = "Engineering";
-    double sal2 = 92000.0;
-    int32_t act2 = 1;
-
-    cDB_setRecordValue(db, r2, cDB_getAttribute(db, "id"), &id2);
-    cDB_setRecordValue(db, r2, cDB_getAttribute(db, "name"), name2);
-    cDB_setRecordValue(db, r2, cDB_getAttribute(db, "department"), dept2);
-    cDB_setRecordValue(db, r2, cDB_getAttribute(db, "salary"), &sal2);
-    cDB_setRecordValue(db, r2, cDB_getAttribute(db, "active"), &act2);
-}
-
-```
-
----
-
-### 3. Querying with Custom Functional Predicates
-
-```c
-#include "cDB.h"
-#include <string.h>
-
-// Context struct to pass multiple criteria into the predicate function
-typedef struct {
-    const char* target_dept;
-    double min_salary;
-} QueryParams;
-
-bool filter_department_and_salary(cDB_Database* db, cDB_Record record, void* user_data) {
-    QueryParams* params = (QueryParams*)user_data;
-
-    cDB_Attribute dept_attr = cDB_getAttribute(db, "department");
-    cDB_Attribute sal_attr = cDB_getAttribute(db, "salary");
-
-    char* dept = (char*)cDB_getRecordValue(db, record, dept_attr);
-    double* salary = (double*)cDB_getRecordValue(db, record, sal_attr);
-
-    bool match_dept = dept && (strcmp(dept, params->target_dept) == 0);
-    bool match_sal = salary && (*salary >= params->min_salary);
-
-    return match_dept && match_sal;
-}
-
-void run_query(cDB_Database* db) {
-    QueryParams params = { .target_dept = "Engineering", .min_salary = 90000.0 };
-
-    // Execute selection query via predicate callback
-    cDB_select(db, filter_department_and_salary, &params);
-
-    // Print result view projection
-    cDB_Projection* proj = cDB_getResultProjection(db);
-    cDB_printProjection(db, proj, true, true, NULL, NULL, NULL);
-    cDB_freeProjection(proj);
-}
-
-```
-
----
-
-### 4. Binary Persistence & Reloading
-
-```c
-#include "cDB.h"
-#include <stdio.h>
-
-int main(void) {
-    // Session 1: Create, populate, and save
-    cDB_Database* db1 = cDB_Init();
-    cDB_newTable(db1, "inventory", 100, 3);
-    // ... create attributes & insert records ...
-    
-    cDB_Save(db1, "inventory.cdb");
-    cDB_Close(db1);
-
-    // Session 2: Reload state from disk file
-    cDB_Database* db2 = cDB_Init();
-    if (cDB_Open(db2, "inventory.cdb")) {
-        printf("Database successfully loaded from disk!\n");
-        
-        cDB_Projection* proj = cDB_getTableProjection(db2);
-        cDB_printProjection(db2, proj, true, true, NULL, NULL, NULL);
-        cDB_freeProjection(proj);
+#include <stdint.h>
+
+int main(void)
+{
+    cDB_Database *db = cdb_Create();
+    if (!db) return 1;
+
+    if (!cdb_CreateTable(db, "inventory", 100, 3)) {
+        cdb_Destroy(db);
+        return 1;
     }
-    cDB_Close(db2);
+
+    cDB_Attribute item = cdb_CreateAttribute(db, "item", CDB_STRING, 32);
+    cDB_Attribute stock = cdb_CreateAttribute(db, "stock", CDB_UINT32, 0);
+    cDB_Attribute price = cdb_CreateAttribute(db, "price", CDB_FLOAT32, 0);
+
+    cdb_set_recordName(db, 0, "keyboard");
+    cdb_set_string(db, 0, &item, "Mechanical Keyboard");
+    cdb_set_u32(db, 0, &stock, 45);
+    cdb_set_f32(db, 0, &price, 99.99f);
+
+    cDB_Projection *table = cdb_CreateTableProjection(db);
+    cdb_printProjection(db, table, false, true, NULL);
+    cdb_freeProjection(table);
+
+    cdb_save(db, "inventory.cdb");
+    cdb_Destroy(db);
     return 0;
 }
-
 ```
+
+`cdb_Destroy()` saves an unsaved active table before freeing it. Call `cdb_save()` explicitly when you need to choose when or where the file is written.
+
+## Types
+
+| Constant | Stored value |
+| --- | --- |
+| `CDB_CUSTOM` | Raw binary data with a caller-provided size |
+| `CDB_BOOL` | `bool` |
+| `CDB_INT32` / `CDB_INT64` | Signed 32- / 64-bit integer |
+| `CDB_UINT32` / `CDB_UINT64` | Unsigned 32- / 64-bit integer |
+| `CDB_FLOAT32` / `CDB_FLOAT64` | `float` / `double` |
+| `CDB_STRING` | Fixed-size, null-terminated character buffer |
+
+Pass `0` as `custom_size` for built-in types. For `CDB_STRING`, it is each buffer’s capacity, including the null terminator. For `CDB_CUSTOM`, it is the number of bytes in each cell.
+
+## .cdb File Architecture
+
+| Order | Field | Size | Description |
+|---:|---|---:|---|
+| 0 | Magic bytes | 12 bytes | File identifier: `de1whoasked\0` |
+| 1 | Table name | 65 bytes | Null-terminated table name buffer |
+| 2 | Attribute capacity | 8 bytes | Maximum number of attributes (`uint64_t`) |
+| 3 | Record capacity | 8 bytes | Maximum number of records (`uint64_t`) |
+| 4 | Attribute sizes | `attributeCapacity × sizeof(size_t)` | Size in bytes of one value for each attribute |
+| 5 | Attribute names | `attributeCapacity × 65 bytes` | Fixed-size name buffer for every attribute slot |
+| 6 | Record names | `recordCapacity × 65 bytes` | Fixed-size name buffer for every record slot |
+| 7 | Column data | Variable | One contiguous data block per attribute, written in attribute-index order |
+| 8 | Attribute type references | `attributeCapacity × sizeof(cDB_Datatype)` | The `cDB_Datatype` value for each attribute |
+
+## Public API
+
+[`include/cDB.h`](include/cDB.h) is authoritative.
+
+### Lifecycle and persistence
+
+```c
+cDB_Database *cdb_Create(void);
+void cdb_Destroy(cDB_Database *db);
+
+bool cdb_CreateTable(
+    cDB_Database *db,
+    const char name[CDB_STD_STRLEN],
+    uint32_t recordCapacity,
+    uint32_t attributeCapacity
+);
+
+bool cdb_save(cDB_Database *db, const char filename[65]);
+bool cdb_open(cDB_Database *db, const char filename[65]);
+bool cdb_exportCSV(cDB_Database *db, const cDB_Projection *projection,
+                   const char filename[65]);
+```
+
+Pass `NULL` to `cdb_save()` to save as `<table-name>.cdb`. `cdb_open()` save the current active table and open new table of the associated filename. The `.cdb` format is a simple native binary format intended for compatible cDB builds, not portable interchange.
+
+### Schema and record names
+
+```c
+cDB_Attribute cdb_CreateAttribute(cDB_Database *db, const char name[CDB_STD_STRLEN], cDB_Datatype type, size_t custom_size);
+cDB_Attribute cdb_getAttribute(cDB_Database *db, const char name[CDB_STD_STRLEN]);
+cDB_Attribute cdb_getAttribute_byIndex(cDB_Database *db, uint64_t index);
+void cdb_setAttributeName(cDB_Database *db, cDB_Attribute *attribute, const char name[CDB_STD_STRLEN]);
+cDB_Record cdb_get_record(cDB_Database *db, const char name[CDB_STD_STRLEN]);
+void cdb_set_recordName(cDB_Database *db, cDB_Record record, const char name[CDB_STD_STRLEN]);
+```
+
+`cdb_get_record()` looks up an existing record name and returns `UINT64_MAX` when it cannot find one. It does not create a record. Select a valid slot below `recordCapacity`, then activate it with `cdb_set_recordName()`.
+
+### Values
+
+For raw or custom values:
+
+```c
+void cdb_set_t(cDB_Database *db, cDB_Record record, cDB_Attribute *attribute, const void *data);
+void *cdb_get_t(cDB_Database *db, cDB_Record record, cDB_Attribute *attribute);
+```
+
+For built-in types, prefer the typed functions:
+
+```c
+cdb_set_bool(...)    cdb_get_bool(...)
+cdb_set_i32(...)     cdb_get_i32(...)
+cdb_set_i64(...)     cdb_get_i64(...)
+cdb_set_u32(...)     cdb_get_u32(...)
+cdb_set_u64(...)     cdb_get_u64(...)
+cdb_set_f32(...)     cdb_get_f32(...)
+cdb_set_f64(...)     cdb_get_f64(...)
+cdb_set_string(...)  cdb_get_string(...)
+```
+
+Each typed function takes `db`, `record`, and `cDB_Attribute *`; setters then take the new value. `cdb_get_t()` returns a pointer into cDB-managed memory: do not free it or retain it after replacing/destroying the table.
+
+### Selection
+
+Selections evaluate a C callback for every active record:
+
+```c
+typedef bool (*cDB_Predicate)(cDB_Database *db, cDB_Record record, void *user_data);
+
+bool cdb_select(cDB_Database *db, cDB_Predicate predicate, void *user_data);
+void cdb_clearResult(cDB_Database *db);
+const cDB_Result *cdb_getResult(const cDB_Database *db);
+```
+
+Example: select items with stock below a limit.
+
+```c
+static bool low_stock(cDB_Database *db, cDB_Record record, void *user_data)
+{
+    uint32_t limit = *(uint32_t *)user_data;
+    cDB_Attribute stock = cdb_getAttribute(db, "stock");
+    return cdb_get_u32(db, record, &stock) < limit;
+}
+
+uint32_t limit = 20;
+cdb_select(db, low_stock, &limit);
+```
+
+Pass `NULL` as the predicate to select all active records. The result belongs to the database and is replaced by the next selection, table replacement, or destruction.
+
+### Projections and printing
+
+```c
+cDB_Projection *cdb_CreateProjection(
+    cDB_Database *db, 
+    cDB_Record *records, 
+    uint64_t recordCount,
+    uint64_t attributeCount,
+    const uint64_t *attributeIndices
+);
+cDB_Projection *cdb_CreateResultProjection(cDB_Database *db);
+cDB_Projection *cdb_CreateTableProjection(cDB_Database *db);
+void cdb_freeProjection(cDB_Projection *projection);
+
+void cdb_printProjection(
+    cDB_Database *db, 
+    cDB_Projection *projection,
+    bool horizontalSeparator, bool verticalSeparator, 
+    cDB_PrintStyle *printStyle
+);
+```
+
+- `cdb_CreateTableProjection()` includes every active record and attribute.
+- `cdb_CreateResultProjection()` uses records from the most recent selection.
+- `cdb_CreateProjection()` creates a chosen view. Pass `NULL` for either index array to use sequential indices in that dimension.
+- Free every successful projection with `cdb_freeProjection()`.
+
+`cdb_printProjection()` writes an ASCII table to standard output. Pass `NULL` for `printStyle` to use the default `+`, `-`, and `|` border style.
+
+## Command-line utility
+
+After building, use `cdb` to inspect a saved database or export it to CSV:
+
+```sh
+cdb inventory.cdb
+cdb --view-t inventory.cdb
+cdb --export-csv inventory.cdb inventory.csv
+```
+
+## Limitations and intended use
+
+cDB is built for coursework, experiments, and small embedded demonstrations. It does not provide SQL parsing, multiple tables in a database object, joins, indexes, transactions, concurrency control, dynamic table resizing, row deletion, or cross-platform/versioned binary compatibility.
+
+For production work, use a mature database system. cDB is intended to make columnar layout, C callbacks, binary serialization, and API design easy to inspect and learn from.

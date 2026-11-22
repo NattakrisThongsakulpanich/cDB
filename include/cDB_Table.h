@@ -12,34 +12,34 @@ typedef struct
 
 	void** data; // [AttributeIdx][RecordIdx]
 
-	size_t* AttributeSizes;
-	char (*AttributeAlias)[65];
-	uint64_t maxAttribute;
+	size_t* attributeSizes;
+	char (*attributeNames)[65];
+	uint64_t attributeCapacity;
 	
-	uint64_t maxRecord;
-	char (*RecordAlias)[65];
+	uint64_t recordCapacity;
+	char (*recordNames)[65];
 
 } cDB_Table;
 
 // Constructor / Destructor
-cDB_Table* cDB_Table_new(const uint64_t maxAttribute, const uint64_t maxRecord, const char* name);
-void cDB_Table_destroy(cDB_Table* t);
+cDB_Table* cdb_table_Create(const uint64_t attributeCapacity, const uint64_t recordCapacity, const char* name);
+void cdb_table_Destroy(cDB_Table* t);
 
 // Gets
-uint64_t cDB_Table_getAttributeIdx(cDB_Table* t, const char* alias);
-uint64_t cDB_Table_getRecordIdx(cDB_Table* t, const char* alias);
-void* cDB_Table_get(cDB_Table* t, uint64_t RecordIdx, uint64_t AttributeIdx);
+uint64_t cdb_table_getAttributeIndex(cDB_Table* t, const char* alias);
+uint64_t cdb_table_getRecordIndex(cDB_Table* t, const char* alias);
+void* cdb_table_get(cDB_Table* t, uint64_t RecordIdx, uint64_t AttributeIdx);
 
 // Sets
-void cDB_Table_setRecordAlias(cDB_Table* t, uint64_t RecordIdx, const char* alias);
-void cDB_Table_setAttributeAlias(cDB_Table* t, uint64_t AttributeIdx, const char* alias);
-void cDB_Table_cpyRecordAlias(cDB_Table* t, uint64_t RecordIdx, char* buffer);
-void cDB_Table_cpyAttributeAlias(cDB_Table* t, uint64_t AttributeIdx, char* buffer);
+void cdb_table_setRecordName(cDB_Table* t, uint64_t RecordIdx, const char* alias);
+void cdb_table_setAttributeName(cDB_Table* t, uint64_t AttributeIdx, const char* alias);
+void cdb_table_copyRecordName(cDB_Table* t, uint64_t RecordIdx, char* buffer);
+void cdb_table_copyAttributeName(cDB_Table* t, uint64_t AttributeIdx, char* buffer);
 
-void cDB_Table_setAttributeSize(cDB_Table* t, uint64_t AttributeIdx, size_t size);
-void cDB_Table_set(cDB_Table* t, uint64_t RecordIdx, uint64_t AttributeIdx, const void* data);
+void cdb_table_setAttributeSize(cDB_Table* t, uint64_t AttributeIdx, size_t size);
+void cdb_table_set(cDB_Table* t, uint64_t RecordIdx, uint64_t AttributeIdx, const void* data);
 
 // IO
-bool cDB_Table_fwrite(cDB_Table* t, FILE* f);
-__declspec(deprecated("Use cDB_Table_fromf(FILE* f) instead")) bool cDB_Table_fread(cDB_Table* t, FILE* f);
-cDB_Table* cDB_Table_fromf(FILE* f);
+bool cdb_table_writeFile(cDB_Table* t, FILE* f);
+__declspec(deprecated("Use cdb_table_readFile(FILE* f) instead")) bool cdb_table_read_file_into(cDB_Table* t, FILE* f);
+cDB_Table* cdb_table_readFile(FILE* f);
