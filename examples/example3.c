@@ -5,7 +5,7 @@
  */
 #include <ctype.h>
 #include <math.h>
-#include "cDB.h"
+#include "../include/cDB.h"
 
 #define NAME_LEN 129
 #define ID_LEN 21
