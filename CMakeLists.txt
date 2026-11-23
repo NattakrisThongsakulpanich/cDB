@@ -19,3 +19,12 @@ target_link_libraries(cdb_tui PRIVATE cDB)
 
 add_executable(example1 examples/example1.c)
 target_link_libraries(example1 PRIVATE cDB)
+
+add_executable(example2 examples/example2.c)
+target_link_libraries(example2 PRIVATE cDB)
+
+add_executable(example3 examples/example3.c)
+target_link_libraries(example3 PRIVATE cDB)
+
+add_executable(datagen examples/datagen.c)
+target_link_libraries(datagen PRIVATE cDB)

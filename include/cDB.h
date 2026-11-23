@@ -85,6 +85,8 @@ void cdb_Destroy(cDB_Database* db);
 // File/IO
 bool cdb_save(cDB_Database* db, const char filename[65]);
 bool cdb_open(cDB_Database* db, const char filename[65]);
+
+bool cdb_importCSV(cDB_Database*db, const char filename[65], cDB_Datatype* format);
 bool cdb_exportCSV(cDB_Database* db, const cDB_Projection* proj, const char filename[65]);
 
 // Table manipulation

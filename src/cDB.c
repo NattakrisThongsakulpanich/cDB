@@ -75,6 +75,85 @@ static void write_rfc4180_field(FILE* f, const char* str)
 	fputc('"', f);
 }
 
+// Helper to read a logical RFC 4180 line, accounting for quotes that span newlines
+static bool read_csv_line(FILE* f, char* line_buf, size_t max_size)
+{
+	if (!f || !line_buf || max_size == 0) return false;
+
+	size_t idx = 0;
+	bool in_quotes = false;
+	int c;
+
+	while ((c = fgetc(f)) != EOF) {
+		if (c == '"') {
+			in_quotes = !in_quotes;
+		}
+
+		if (!in_quotes && c == '\n') {
+			break; // end of logical line
+		}
+
+		if (idx + 1 < max_size) {
+			line_buf[idx++] = (char)c;
+		}
+	}
+
+	if (c == EOF && idx == 0) {
+		return false; // end of file
+	}
+
+	line_buf[idx] = '\0';
+	return true;
+}
+
+// Helper to parse the next field from an RFC 4180 line
+static bool parse_csv_field(const char** cursor, char* field_buf, size_t max_size)
+{
+	if (!cursor || !*cursor || !field_buf || max_size == 0) return false;
+
+	const char* p = *cursor;
+	if (*p == '\0') return false;
+
+	size_t out_idx = 0;
+	if (*p == '"') {
+		p++; // skip opening quote
+		while (*p) {
+			if (*p == '"') {
+				if (*(p + 1) == '"') {
+					// Escaped quote
+					if (out_idx + 1 < max_size) field_buf[out_idx++] = '"';
+					p += 2;
+				} else {
+					// Closing quote
+					p++;
+					break;
+				}
+			} else {
+				if (out_idx + 1 < max_size) field_buf[out_idx++] = *p;
+				p++;
+			}
+		}
+		// Skip up to delimiter or end
+		while (*p && *p != ',') p++;
+		if (*p == ',') p++;
+	} else {
+		while (*p && *p != ',' && *p != '\r' && *p != '\n') {
+			if (out_idx + 1 < max_size) field_buf[out_idx++] = *p;
+			p++;
+		}
+		if (*p == ',') {
+			p++;
+		} else {
+			// strip trailing \r or \n
+			while (*p == '\r' || *p == '\n') p++;
+		}
+	}
+
+	field_buf[out_idx] = '\0';
+	*cursor = p;
+	return true;
+}
+
 //-----------------------------------Database lifecycle----------------------------------------
 
 cDB_Database* cdb_Create()
@@ -290,7 +369,8 @@ bool cdb_exportCSV(cDB_Database *db, const cDB_Projection *proj, const char *fil
 
 			fputc(',', fptr);
 
-			cDB_Attribute attr = cdb_getAttribute_byIndex(db, j);
+			uint64_t attr_idx = proj->projectedAttributes[j];
+			cDB_Attribute attr = cdb_getAttribute_byIndex(db, attr_idx);
 			char formatv[128];
 
 			cdb_format_value(db, r, &attr, formatv);
@@ -303,10 +383,174 @@ bool cdb_exportCSV(cDB_Database *db, const cDB_Projection *proj, const char *fil
 		fputs("\r\n", fptr);
 	}
 
+	
+
 	fclose(fptr);
 	return true;
 }
 
+bool cdb_importCSV(cDB_Database *db, const char *filename, cDB_Datatype* format)
+{
+	if (!db || !filename || filename[0] == '\0' || !format) return false;
+
+	FILE* f = fopen(filename, "r");
+	if (!f) return false;
+
+	char line_buf[4096];
+	char field_buf[1024];
+
+	// Read header row
+	if (!read_csv_line(f, line_buf, sizeof(line_buf))) {
+		fclose(f);
+		return false;
+	}
+
+	// Count number of columns in header
+	const char* ptr = line_buf;
+	uint32_t total_cols = 0;
+	while (parse_csv_field(&ptr, field_buf, sizeof(field_buf))) {
+		total_cols++;
+	}
+
+	if (total_cols < 2) {
+		// Need at least RECORD and 1 attribute column
+		fclose(f);
+		return false;
+	}
+
+	uint32_t attr_count = total_cols - 1;
+
+	// Count records (remaining rows)
+	uint32_t record_count = 0;
+	while (read_csv_line(f, line_buf, sizeof(line_buf))) {
+		// Skip empty lines
+		const char* p = line_buf;
+		while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+		if (*p != '\0') {
+			record_count++;
+		}
+	}
+
+	if (record_count == 0) {
+		fclose(f);
+		return false;
+	}
+
+	// Derive table name from filename
+	char tablename[CDB_STD_STRLEN] = {0};
+	const char* base = strrchr(filename, '/');
+	if (!base) base = strrchr(filename, '\\');
+	base = (base) ? base + 1 : filename;
+	strncpy(tablename, base, CDB_STD_STRLEN - 1);
+	tablename[CDB_STD_STRLEN - 1] = '\0';
+	char* dot = strrchr(tablename, '.');
+	if (dot && (strcmp(dot, ".csv") == 0 || strcmp(dot, ".CSV") == 0)) {
+		*dot = '\0';
+	}
+
+	// Create table
+	if (!cdb_CreateTable(db, tablename, record_count, attr_count)) {
+		fclose(f);
+		return false;
+	}
+
+	// Rewind to beginning and re-read header to create attributes
+	rewind(f);
+	read_csv_line(f, line_buf, sizeof(line_buf));
+	ptr = line_buf;
+
+	// Skip RECORD header
+	parse_csv_field(&ptr, field_buf, sizeof(field_buf));
+
+	// Create attributes
+	for (uint32_t j = 0; j < attr_count; j++) {
+		if (!parse_csv_field(&ptr, field_buf, sizeof(field_buf))) {
+			snprintf(field_buf, sizeof(field_buf), "ATTR_%u", j);
+		}
+		cDB_Datatype dt = format[j];
+		size_t custom_sz = (dt == CDB_STRING) ? 64 : 0;
+		cdb_CreateAttribute(db, field_buf, dt, custom_sz);
+	}
+
+	// Read and populate data rows
+	uint32_t current_row = 0;
+	while (current_row < record_count && read_csv_line(f, line_buf, sizeof(line_buf))) {
+		const char* p = line_buf;
+		while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+		if (*p == '\0') continue; // skip blank line
+
+		ptr = line_buf;
+
+		// 1. First field is Record Alias / Name
+		if (parse_csv_field(&ptr, field_buf, sizeof(field_buf))) {
+			cdb_set_recordName(db, current_row, field_buf);
+		}
+
+		// 2. Next fields are attributes
+		for (uint32_t j = 0; j < attr_count; j++) {
+			if (!parse_csv_field(&ptr, field_buf, sizeof(field_buf))) {
+				field_buf[0] = '\0';
+			}
+
+			cDB_Attribute attr = cdb_getAttribute_byIndex(db, j);
+			if (!attr.isValid) continue;
+
+			switch (format[j]) {
+				case CDB_BOOL: {
+					bool val = (strcmp(field_buf, "true") == 0 || strcmp(field_buf, "1") == 0);
+					cdb_set_bool(db, current_row, &attr, val);
+					break;
+				}
+				case CDB_INT32: {
+					int32_t val = (int32_t)strtol(field_buf, NULL, 10);
+					cdb_set_i32(db, current_row, &attr, val);
+					break;
+				}
+				case CDB_INT64: {
+					int64_t val = (int64_t)strtoll(field_buf, NULL, 10);
+					cdb_set_i64(db, current_row, &attr, val);
+					break;
+				}
+				case CDB_UINT32: {
+					uint32_t val = (uint32_t)strtoul(field_buf, NULL, 10);
+					cdb_set_u32(db, current_row, &attr, val);
+					break;
+				}
+				case CDB_UINT64: {
+					uint64_t val = (uint64_t)strtoull(field_buf, NULL, 10);
+					cdb_set_u64(db, current_row, &attr, val);
+					break;
+				}
+				case CDB_FLOAT32: {
+					float val = (float)strtod(field_buf, NULL);
+					cdb_set_f32(db, current_row, &attr, val);
+					break;
+				}
+				case CDB_FLOAT64: {
+					double val = strtod(field_buf, NULL);
+					cdb_set_f64(db, current_row, &attr, val);
+					break;
+				}
+				case CDB_STRING: {
+					cdb_set_string(db, current_row, &attr, field_buf);
+					break;
+				}
+				case CDB_CUSTOM:
+				default: {
+					// Fallback: store as string if buffer fits
+					cdb_set_string(db, current_row, &attr, field_buf);
+					break;
+				}
+			}
+		}
+
+		current_row++;
+	}
+
+	fclose(f);
+	db->isSaved = false;
+	return true;
+}
 
 //-----------------------------------Table manipulation----------------------------------------
 
