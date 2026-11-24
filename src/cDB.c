@@ -10,6 +10,8 @@
 
 const char MAGIC_BYTE[12] = {0x64, 0x65, 0x31, 0x77, 0x68, 0x6f, 0x61, 0x73, 0x6b, 0x65, 0x64, '\0'}; 
 
+//-----------------------------------Helper Functions---------------------------------------- 
+
 static inline size_t cdb_get_datatype_size(cDB_Datatype type, size_t custom_size)
 {
 	switch (type) {
@@ -152,6 +154,66 @@ static bool parse_csv_field(const char** cursor, char* field_buf, size_t max_siz
 	field_buf[out_idx] = '\0';
 	*cursor = p;
 	return true;
+}
+
+// Helper to compare two records by an attribute's value
+static int compare_records(cDB_Database* db, cDB_Record r1, cDB_Record r2, cDB_Attribute* by)
+{
+	if (!db || !by || !by->isValid) return 0;
+
+	void* p1 = cdb_get_t(db, r1, by);
+	void* p2 = cdb_get_t(db, r2, by);
+
+	// Handle NULL values: NULL is considered smaller than non-NULL
+	if (!p1 && !p2) return 0;
+	if (!p1) return -1;
+	if (!p2) return 1;
+
+	switch (by->type) {
+		case CDB_BOOL: {
+			bool b1 = *(bool*)p1;
+			bool b2 = *(bool*)p2;
+			return (int)b1 - (int)b2;
+		}
+		case CDB_INT32: {
+			int32_t v1 = *(int32_t*)p1;
+			int32_t v2 = *(int32_t*)p2;
+			return (v1 > v2) - (v1 < v2);
+		}
+		case CDB_INT64: {
+			int64_t v1 = *(int64_t*)p1;
+			int64_t v2 = *(int64_t*)p2;
+			return (v1 > v2) - (v1 < v2);
+		}
+		case CDB_UINT32: {
+			uint32_t v1 = *(uint32_t*)p1;
+			uint32_t v2 = *(uint32_t*)p2;
+			return (v1 > v2) - (v1 < v2);
+		}
+		case CDB_UINT64: {
+			uint64_t v1 = *(uint64_t*)p1;
+			uint64_t v2 = *(uint64_t*)p2;
+			return (v1 > v2) - (v1 < v2);
+		}
+		case CDB_FLOAT32: {
+			float v1 = *(float*)p1;
+			float v2 = *(float*)p2;
+			return (v1 > v2) - (v1 < v2);
+		}
+		case CDB_FLOAT64: {
+			double v1 = *(double*)p1;
+			double v2 = *(double*)p2;
+			return (v1 > v2) - (v1 < v2);
+		}
+		case CDB_STRING: {
+			return strcmp((const char*)p1, (const char*)p2);
+		}
+		case CDB_CUSTOM:
+		default: {
+			size_t sz = by->size ? by->size : sizeof(uint64_t);
+			return memcmp(p1, p2, sz);
+		}
+	}
 }
 
 //-----------------------------------Database lifecycle----------------------------------------
@@ -707,6 +769,46 @@ void cdb_set_recordName(cDB_Database *db, cDB_Record record, const char alias[CD
 	db->isSaved = false;
 }
 
+void cdb_swapRecord(cDB_Database* db, uint64_t record1, uint64_t record2)
+{
+	if (!db || !db->table) return;
+	if (record1 >= db->table->recordCapacity || record2 >= db->table->recordCapacity) return;
+	if (record1 == record2) return;
+
+	// 1. Swap Record Names (Aliases)
+	char temp_name[65];
+	memcpy(temp_name, db->table->recordNames[record1], 65);
+	memcpy(db->table->recordNames[record1], db->table->recordNames[record2], 65);
+	memcpy(db->table->recordNames[record2], temp_name, 65);
+
+	// 2. Swap all attribute cell values for record1 and record2
+	for (uint64_t i = 0; i < db->table->attributeCapacity; i++) {
+		if (db->table->data[i] == NULL) continue;
+
+		size_t attr_size = db->table->attributeSizes[i];
+		if (attr_size == 0) continue;
+
+		char* col_base = (char*)db->table->data[i];
+		char* ptr1 = col_base + (record1 * attr_size);
+		char* ptr2 = col_base + (record2 * attr_size);
+
+		// Stack buffer for typical sizes, malloc fallback for larger attributes
+		char stack_buf[256];
+		void* temp_val = (attr_size <= sizeof(stack_buf)) ? stack_buf : malloc(attr_size);
+		if (!temp_val) continue;
+
+		memcpy(temp_val, ptr1, attr_size);
+		memcpy(ptr1, ptr2, attr_size);
+		memcpy(ptr2, temp_val, attr_size);
+
+		if (temp_val != stack_buf) {
+			free(temp_val);
+		}
+	}
+
+	db->isSaved = false;
+}
+
 //-----------------------------------Value access----------------------------------------
 
 // set
@@ -968,6 +1070,52 @@ const cDB_Result* cdb_getResult(const cDB_Database* db)
 	}
 
 	return &(db->result);
+}
+
+//-----------------------------------sort------------------------------------------
+
+void cdb_sort_DB(cDB_Database *db, cDB_Attribute* by, cDB_SortDirection direction)
+{
+	if (!db || !db->table || !by || !by->isValid) return;
+	if (db->table->recordCapacity < 2) return;
+
+	uint64_t n = db->table->recordCapacity;
+	for (uint64_t i = 0; i < n - 1; i++) {
+		bool swapped = false;
+		for (uint64_t j = 0; j < n - 1 - i; j++) {
+			int cmp = compare_records(db, j, j + 1, by);
+			bool should_swap = (direction == CDB_SORTDIR_ASCEND) ? (cmp > 0) : (cmp < 0);
+			if (should_swap) {
+				cdb_swapRecord(db, j, j + 1);
+				swapped = true;
+			}
+		}
+		if (!swapped) break;
+	}
+}
+
+void cdb_sort_Projection(cDB_Database* db, cDB_Projection* projection, cDB_Attribute* by, cDB_SortDirection direction)
+{
+	if (!db || !db->table || !projection || !projection->projectedRecords || !by || !by->isValid) return;
+	if (projection->recordCount < 2) return;
+
+	uint64_t n = projection->recordCount;
+	for (uint64_t i = 0; i < n - 1; i++) {
+		bool swapped = false;
+		for (uint64_t j = 0; j < n - 1 - i; j++) {
+			cDB_Record r1 = projection->projectedRecords[j];
+			cDB_Record r2 = projection->projectedRecords[j + 1];
+
+			int cmp = compare_records(db, r1, r2, by);
+			bool should_swap = (direction == CDB_SORTDIR_ASCEND) ? (cmp > 0) : (cmp < 0);
+			if (should_swap) {
+				projection->projectedRecords[j] = r2;
+				projection->projectedRecords[j + 1] = r1;
+				swapped = true;
+			}
+		}
+		if (!swapped) break;
+	}
 }
 
 //-----------------------------------projections----------------------------------------

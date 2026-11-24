@@ -101,6 +101,7 @@ void cdb_setAttributeName(cDB_Database *db, cDB_Attribute* attrib, const char al
 // Record operations
 cDB_Record cdb_get_record(cDB_Database* db, const char alias[CDB_STD_STRLEN]);
 void cdb_set_recordName(cDB_Database *db, cDB_Record record, const char alias[CDB_STD_STRLEN]);
+void cdb_swapRecord(cDB_Database* db, uint64_t record1, uint64_t record2); //swap everything include attributes and RecordName
 
 //-----------------------------------Value access----------------------------------------
 // set
@@ -135,6 +136,10 @@ void 		cdb_clearResult(cDB_Database* db);
 bool 		cdb_select(cDB_Database* db, cDB_Predicate predicate, void* user_data);
 bool 		cdb_copyResult(const cDB_Database* db, cDB_Result* dst); //cDB_resultGetRecord -> cdb_copyResult()
 const cDB_Result* cdb_getResult(const cDB_Database* db);
+
+//-----------------------------------sort------------------------------------------
+void cdb_sort_DB(cDB_Database *db, cDB_Attribute* by, cDB_SortDirection direction);
+void cdb_sort_Projection(cDB_Database* db, cDB_Projection* projection, cDB_Attribute* by, cDB_SortDirection direction);
 
 //----------------------------------projections------------------------------------
 
